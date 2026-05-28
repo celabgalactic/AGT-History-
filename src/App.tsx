@@ -230,6 +230,9 @@ export default function App() {
   const [endDate, setEndDate] = useState('');
   const [activityFilter, setActivityFilter] = useState('ALL');
   const [significanceFilter, setSignificanceFilter] = useState('ALL');
+  const [civFilter, setCivFilter] = useState('');
+  const [showAutocomplete, setShowAutocomplete] = useState(false);
+  const autocompleteRef = useRef<HTMLDivElement>(null);
 
   // Fetch / parsed raw dataset from published remote Google sheet
   const [data, setData] = useState<string[][]>([]); // Row array containing strings
@@ -416,6 +419,41 @@ export default function App() {
     return Array.from(typesSet).sort();
   }, [data]);
 
+  // Dynamically extract and catalog unique civilization tags (Column AD - index 29)
+  const civilizationTagsList = useMemo(() => {
+    const tagsSet = new Set<string>();
+    data.forEach(row => {
+      if (row[6] && row[6].trim().toUpperCase() === 'Y') {
+        const civStr = String(row[29] || '').trim();
+        if (civStr) {
+          const tags = civStr.split(/[,;]+/).map(t => t.trim()).filter(Boolean);
+          tags.forEach(tag => tagsSet.add(tag));
+        }
+      }
+    });
+    return Array.from(tagsSet).sort();
+  }, [data]);
+
+  // Compute matching suggestions for the autocomplete
+  const civSuggestions = useMemo(() => {
+    const query = civFilter.trim().toLowerCase();
+    if (!query || query === 'all') return [];
+    return civilizationTagsList.filter(tag => 
+      tag.toLowerCase().includes(query) && tag.toLowerCase() !== query
+    );
+  }, [civilizationTagsList, civFilter]);
+
+  // Close suggestion dropdown on click outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (autocompleteRef.current && !autocompleteRef.current.contains(e.target as Node)) {
+        setShowAutocomplete(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   // Pre-compiled list of records adhering to active filters
   const filteredRecords = useMemo(() => {
     // Only parse rows where Column G (index 6, Use of timeline) equals "Y"
@@ -444,9 +482,18 @@ export default function App() {
         }
       }
 
+      // 4. Civilization Tag checking
+      const queryCiv = civFilter.trim().toLowerCase();
+      if (queryCiv && queryCiv !== 'all') {
+        const rowCivsStr = String(row[29] || '').trim().toLowerCase();
+        if (!rowCivsStr.includes(queryCiv)) {
+          return false;
+        }
+      }
+
       return true;
     });
-  }, [data, startDate, endDate, activityFilter, significanceFilter]);
+  }, [data, startDate, endDate, activityFilter, significanceFilter, civFilter]);
 
   // Sorted events chronologically (earliest to latest format)
   const sortedEvents = useMemo(() => {
@@ -490,6 +537,13 @@ export default function App() {
 
   // Parse the active event parameters safely
   const activeEvent = sortedEvents[currentEventIndex];
+
+  const activeEventCivTags = useMemo(() => {
+    if (!activeEvent) return [];
+    const civStr = String(activeEvent[29] || '').trim();
+    if (!civStr) return [];
+    return civStr.split(/[,;]+/).map(t => t.trim()).filter(Boolean);
+  }, [activeEvent]);
 
   // Derive Era layout classification
   // Era check: start of a major era flag in Column AC (index 28) == "Y", or Significance (Column H - index 7) == "Era"
@@ -720,6 +774,65 @@ export default function App() {
                   <option value="Trivial">Trivial logs & Higher</option>
                 </select>
               </div>
+
+              {/* Civilization Autocomplete Filter */}
+              <div ref={autocompleteRef} className="flex flex-col gap-2 md:col-span-2 relative">
+                <label className="text-[10px] uppercase tracking-wider text-agt-orange/60 font-bold flex items-center gap-1.5">
+                  <Search className="w-3.5 h-3.5 text-red-500" />
+                  Civilization Filter
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    placeholder="Search by civilization tag (e.g. Gek, Vy'keen, Korvax - leave blank or 'ALL' for default)"
+                    value={civFilter}
+                    onChange={(e) => {
+                      setCivFilter(e.target.value);
+                      setShowAutocomplete(true);
+                    }}
+                    onFocus={() => setShowAutocomplete(true)}
+                    className="w-full bg-[#1c1c1c] border border-[#FF0500]/40 hover:border-red-400 focus:border-[#FF0500] focus:outline-none focus:ring-1 focus:ring-[#FF0500] pl-3.5 pr-10 py-2.5 text-xs font-mono text-agt-orange rounded-xl placeholder:text-agt-orange/30"
+                  />
+                  {civFilter && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCivFilter('');
+                        setShowAutocomplete(false);
+                      }}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-red-500 hover:text-white rounded-md bg-transparent cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Floating Autocomplete dropdown of suggestions */}
+                <AnimatePresence>
+                  {showAutocomplete && civSuggestions.length > 0 && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -5 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -5 }}
+                      className="absolute left-0 right-0 top-full mt-1 bg-[#161616] border-2 border-[#FF0500] rounded-xl overflow-hidden shadow-2xl z-[90] max-h-48 overflow-y-auto custom-scrollbar"
+                    >
+                      {civSuggestions.map((tag, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => {
+                            setCivFilter(tag);
+                            setShowAutocomplete(false);
+                          }}
+                          className="w-full text-left px-4 py-2.5 hover:bg-[#FF0500]/20 text-[#FFB451] text-xs font-mono border-b border-[#FF0500]/10 last:border-0 transition-colors cursor-pointer"
+                        >
+                          {tag}
+                        </button>
+                      ))}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
             </div>
 
             {/* Diagnostics Stats and Clear option */}
@@ -732,13 +845,14 @@ export default function App() {
               </div>
               
               {/* Reset filter helpers */}
-              {(startDate || endDate || activityFilter !== 'ALL' || significanceFilter !== 'ALL') && (
+              {(startDate || endDate || activityFilter !== 'ALL' || significanceFilter !== 'ALL' || civFilter) && (
                 <button
                   onClick={() => {
                     setStartDate('');
                     setEndDate('');
                     setActivityFilter('ALL');
                     setSignificanceFilter('ALL');
+                    setCivFilter('');
                   }}
                   className="px-4 py-1.5 bg-[#FF0500]/10 border border-[#FF0500] hover:bg-[#FF0500] hover:text-white transition-colors text-white font-bold text-[9px] uppercase tracking-wider rounded-lg cursor-pointer"
                 >
@@ -759,7 +873,7 @@ export default function App() {
                 ) : (
                   <>
                     <BookOpen className="w-4 h-4" />
-                    <span>Display Event Story</span>
+                    <span>Display History</span>
                   </>
                 )}
               </button>
@@ -1040,7 +1154,7 @@ export default function App() {
                         {/* AGT Stardate Range */}
                         {agtStardateRangeString && (
                           <div className="flex items-center gap-2 text-xs font-mono text-agt-orange/60 border-b border-agt-orange/10 pb-2">
-                            <span className="text-[#FF0500] font-bold uppercase tracking-wider">Galactic Stardate:</span>
+                            <span className="text-[#FF0500] font-bold uppercase tracking-wider">AGT Stardate:</span>
                             <span>{agtStardateRangeString}</span>
                           </div>
                         )}
@@ -1129,6 +1243,26 @@ export default function App() {
                               <span className="truncate pr-4">{getDisplayUrlLabel(url)}</span>
                               <ExternalLink className="w-3 h-3 shrink-0 text-red-500 group-hover:text-white" />
                             </a>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Civilization Tags Block */}
+                    {activeEventCivTags.length > 0 && (
+                      <div className="pt-4 border-t border-white/5 space-y-2">
+                        <h4 className="text-[10px] uppercase font-bold tracking-widest text-[#FFB451]/40 flex items-center gap-1.5">
+                          <Search className="w-3 h-3 text-red-500" />
+                          CIVILIZATIONS
+                        </h4>
+                        <div className="flex flex-wrap gap-2 pt-1">
+                          {activeEventCivTags.map((tag, idx) => (
+                            <span 
+                              key={idx}
+                              className="px-2.5 py-1 bg-red-950/30 border border-red-500/20 text-agt-orange/90 rounded-lg text-xs font-mono tracking-wide"
+                            >
+                              {tag}
+                            </span>
                           ))}
                         </div>
                       </div>
