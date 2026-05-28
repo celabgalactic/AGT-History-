@@ -1,0 +1,49 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400..900;1,400..900&display=swap');
+@import "tailwindcss";
+
+@font-face {
+  font-family: 'CustomFont';
+  src: url('/NMSFuturaProBook_Kerned.ttf') format('truetype');
+  font-display: swap;
+}
+
+@theme {
+  --font-sans: "CustomFont", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Playfair Display", "Georgia", serif;
+  --color-agt-orange: #FFB451;
+}
+
+@layer utilities {
+  .glass-card {
+    background: rgba(26, 26, 26, 0.6);
+    border: 1px solid rgba(255, 180, 81, 0.08);
+    backdrop-filter: blur(12px);
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+  }
+
+  .accent-border {
+    border-bottom: 1px solid rgba(255, 180, 81, 0.1);
+  }
+
+  .input-glow:focus {
+    box-shadow: 0 0 15px rgba(255, 180, 81, 0.05);
+  }
+
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 4px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(255, 180, 81, 0.05);
+    border-radius: 10px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 180, 81, 0.1);
+  }
+}
+
+body {
+  @apply antialiased bg-[#0a0a0a] text-agt-orange;
+}
