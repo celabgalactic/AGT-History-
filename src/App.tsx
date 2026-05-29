@@ -101,6 +101,63 @@ const parseSheetDate = (val: string): Date | null => {
   return null;
 };
 
+// Auto-mask date formatting tool to assist DD/MM/YYYY typed input
+const formatToDDMMYYYY = (val: string, previousVal: string): string => {
+  if (val.length < previousVal.length) {
+    return val; // Allow deletion cleanly
+  }
+  
+  const digits = val.replace(/\D/g, '');
+  let formatted = '';
+  
+  if (digits.length <= 2) {
+    formatted = digits;
+  } else if (digits.length <= 4) {
+    formatted = `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  } else {
+    formatted = `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4, 8)}`;
+  }
+  
+  return formatted;
+};
+
+// Convert custom typed DD/MM/YYYY date to system compatible YYYY-MM-DD
+const parseInputDateToIso = (val: string): string => {
+  const parts = val.split('/');
+  if (parts.length === 3) {
+    const d = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10);
+    const y = parseInt(parts[2], 10);
+    if (!isNaN(d) && !isNaN(m) && !isNaN(y) && m >= 1 && m <= 12 && d >= 1 && d <= 31 && y >= 1000) {
+      const year = String(y).padStart(4, '0');
+      const month = String(m).padStart(2, '0');
+      const day = String(d).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+  }
+  return '';
+};
+
+const isRawDateComplete = (val: string): boolean => {
+  const digits = val.replace(/\D/g, '');
+  return digits.length === 8;
+};
+
+const isRawDateValid = (val: string): boolean => {
+  if (!val) return true;
+  const parts = val.split('/');
+  if (parts.length !== 3) return false;
+  const d = parseInt(parts[0], 10);
+  const m = parseInt(parts[1], 10);
+  const y = parseInt(parts[2], 10);
+  if (isNaN(d) || isNaN(m) || isNaN(y)) return false;
+  if (m < 1 || m > 12) return false;
+  if (d < 1 || d > 31) return false;
+  if (y < 2016 || y > 2100) return false; // sheets data bounds
+  const dateObj = new Date(y, m - 1, d);
+  return dateObj.getFullYear() === y && dateObj.getMonth() === m - 1 && dateObj.getDate() === d;
+};
+
 // Earth calendar dates to AGT Stardate conversion helper
 // Format: YYYY.DD.MM where YYYY = Earth year + 1716
 const toAgtStardate = (date: Date | null): string => {
@@ -119,6 +176,12 @@ const getDisplayUrlLabel = (url: string): string => {
   } catch (e) {
     return 'Galactic Database Link';
   }
+};
+
+// Check if credit string has HTML tags (especially <a> anchors)
+const isHtmlString = (str: string): boolean => {
+  if (!str) return false;
+  return /<[a-z][\s\S]*>/i.test(str);
 };
 
 // Color coding styles for Event Type tags
@@ -156,13 +219,16 @@ const getEventTypeStyle = (type: string): string => {
 
 // Color coding styles for Significance tags with importance ranks
 const SignificanceRanks: Record<string, number> = {
-  'era': 5,
-  'epic': 4,
-  'major': 3,
-  'minor': 2,
-  'detail event': 1,
-  'detail': 1,
-  'trivial': 0
+  'era': 6,
+  'epic': 5,
+  'major': 4,
+  'minor': 3,
+  'event detail': 2,
+  'detail event': 2, // fallback
+  'detail': 2, // fallback
+  'low': 1,
+  'trivial': 1, // fallback
+  'insignificant': 0
 };
 
 const getSignificanceStyle = (sig: string): string => {
@@ -176,12 +242,16 @@ const getSignificanceStyle = (sig: string): string => {
       return 'bg-amber-500/20 border-amber-500/50 text-amber-200 font-semibold';
     case 'minor':
       return 'bg-cyan-500/15 border-cyan-500/50 text-cyan-200';
+    case 'event detail':
     case 'detail event':
     case 'detail':
       return 'bg-blue-500/15 border-blue-500/45 text-blue-200';
+    case 'low':
     case 'trivial':
-    default:
       return 'bg-slate-500/15 border-slate-500/45 text-slate-300';
+    case 'insignificant':
+    default:
+      return 'bg-zinc-500/10 border-zinc-500/30 text-zinc-400';
   }
 };
 
@@ -228,11 +298,25 @@ export default function App() {
   // Filters inputs
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
-  const [activityFilter, setActivityFilter] = useState('ALL');
+  const [rawStartDate, setRawStartDate] = useState('');
+  const [rawEndDate, setRawEndDate] = useState('');
   const [significanceFilter, setSignificanceFilter] = useState('ALL');
+  const [significanceMatchType, setSignificanceMatchType] = useState<'exact' | 'threshold'>('threshold');
+  const [activityFilter, setActivityFilter] = useState('ALL');
   const [civFilter, setCivFilter] = useState('');
   const [showAutocomplete, setShowAutocomplete] = useState(false);
   const autocompleteRef = useRef<HTMLDivElement>(null);
+
+  // Sync custom formatted dates
+  useEffect(() => {
+    const isoStart = parseInputDateToIso(rawStartDate);
+    setStartDate(isoStart);
+  }, [rawStartDate]);
+
+  useEffect(() => {
+    const isoEnd = parseInputDateToIso(rawEndDate);
+    setEndDate(isoEnd);
+  }, [rawEndDate]);
 
   // Fetch / parsed raw dataset from published remote Google sheet
   const [data, setData] = useState<string[][]>([]); // Row array containing strings
@@ -419,12 +503,12 @@ export default function App() {
     return Array.from(typesSet).sort();
   }, [data]);
 
-  // Dynamically extract and catalog unique civilization tags (Column AD - index 29)
+  // Dynamically extract and catalog unique civilization tags (Column AI - index 34)
   const civilizationTagsList = useMemo(() => {
     const tagsSet = new Set<string>();
     data.forEach(row => {
       if (row[6] && row[6].trim().toUpperCase() === 'Y') {
-        const civStr = String(row[29] || '').trim();
+        const civStr = String(row[34] || '').trim();
         if (civStr) {
           const tags = civStr.split(/[,;]+/).map(t => t.trim()).filter(Boolean);
           tags.forEach(tag => tagsSet.add(tag));
@@ -473,19 +557,29 @@ export default function App() {
         }
       }
 
-      // 3. Significance importance checking (equal or greater importance value)
+      // 3. Significance importance checking (equal or greater importance value, or exact match index)
       if (significanceFilter !== 'ALL') {
-        const filterRank = SignificanceRanks[significanceFilter.toLowerCase()] ?? 0;
-        const currentRank = SignificanceRanks[String(row[7] || '').trim().toLowerCase()] ?? 0;
-        if (currentRank < filterRank) {
-          return false;
+        const rowSig = String(row[7] || '').trim().toLowerCase();
+        const filterSig = significanceFilter.toLowerCase();
+        if (significanceMatchType === 'exact') {
+          const filterRank = SignificanceRanks[filterSig] ?? -1;
+          const currentRank = SignificanceRanks[rowSig] ?? -2;
+          if (filterRank !== currentRank) {
+            return false;
+          }
+        } else {
+          const filterRank = SignificanceRanks[filterSig] ?? 0;
+          const currentRank = SignificanceRanks[rowSig] ?? 0;
+          if (currentRank < filterRank) {
+            return false;
+          }
         }
       }
 
       // 4. Civilization Tag checking
       const queryCiv = civFilter.trim().toLowerCase();
       if (queryCiv && queryCiv !== 'all') {
-        const rowCivsStr = String(row[29] || '').trim().toLowerCase();
+        const rowCivsStr = String(row[34] || '').trim().toLowerCase();
         if (!rowCivsStr.includes(queryCiv)) {
           return false;
         }
@@ -540,16 +634,16 @@ export default function App() {
 
   const activeEventCivTags = useMemo(() => {
     if (!activeEvent) return [];
-    const civStr = String(activeEvent[29] || '').trim();
+    const civStr = String(activeEvent[34] || '').trim();
     if (!civStr) return [];
     return civStr.split(/[,;]+/).map(t => t.trim()).filter(Boolean);
   }, [activeEvent]);
 
   // Derive Era layout classification
-  // Era check: start of a major era flag in Column AC (index 28) == "Y", or Significance (Column H - index 7) == "Era"
+  // Era check: start of a major era flag in Column AH (index 33) == "Y", or Significance (Column H - index 7) == "Era"
   const isEraEvent = useMemo(() => {
     if (!activeEvent) return false;
-    const isEraFlag = String(activeEvent[28] || '').trim().toLowerCase() === 'y';
+    const isEraFlag = String(activeEvent[33] || '').trim().toLowerCase() === 'y';
     const isEraSig = String(activeEvent[7] || '').trim().toLowerCase() === 'era';
     return isEraFlag || isEraSig;
   }, [activeEvent]);
@@ -596,10 +690,35 @@ export default function App() {
     return parts.join(', ');
   }, [activeEvent]);
 
-  // Media parser for active selected story event
-  const activeMedia = useMemo((): MediaSource => {
-    if (!activeEvent) return { type: 'unsupported', src: '' };
-    return parseMediaColumn(activeEvent[24]);
+  // Media elements parser for active selected story event (slots 1, 2, and 3)
+  const activeMediaList = useMemo(() => {
+    if (!activeEvent) return [];
+    
+    // Sloting parameters:
+    // Slot 1: URL Y (index 24), Credit Z (index 25), Caption AA (index 26)
+    // Slot 2: URL AB (index 27), Credit AC (index 28), Caption AD (index 29)
+    // Slot 3: URL AE (index 30), Credit AF (index 31), Caption AG (index 32)
+    const mediaSlots = [
+      { urlIdx: 24, creditIdx: 25, captionIdx: 26 },
+      { urlIdx: 27, creditIdx: 28, captionIdx: 29 },
+      { urlIdx: 30, creditIdx: 31, captionIdx: 32 }
+    ];
+
+    const results = [];
+    for (const slot of mediaSlots) {
+      const urlVal = String(activeEvent[slot.urlIdx] || '').trim();
+      if (urlVal) {
+        const parsed = parseMediaColumn(urlVal);
+        if (parsed.type !== 'unsupported' && parsed.src) {
+          results.push({
+            ...parsed,
+            credit: String(activeEvent[slot.creditIdx] || '').trim(),
+            caption: String(activeEvent[slot.captionIdx] || '').trim()
+          });
+        }
+      }
+    }
+    return results;
   }, [activeEvent]);
 
   // References list (L through Q columns - indexes 11 to 16)
@@ -709,32 +828,60 @@ export default function App() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* Earth dates boundaries fields */}
               <div className="flex flex-col gap-2">
-                <label className="text-[10px] uppercase tracking-wider text-agt-orange/60 font-bold flex items-center gap-1.5">
-                  <Calendar className="w-3.5 h-3.5 text-red-500" />
-                  Earth Start Date (Optional)
+                <label className="text-[10px] uppercase tracking-wider text-agt-orange/60 font-bold flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <Calendar className="w-3.5 h-3.5 text-red-500" />
+                    Earth Start Date (Optional)
+                  </span>
+                  {rawStartDate && !isRawDateValid(rawStartDate) && (
+                    <span className="text-red-500 text-[9px] lowercase font-mono">(! invalid calendar date)</span>
+                  )}
+                  {isRawDateComplete(rawStartDate) && isRawDateValid(rawStartDate) && (
+                    <span className="text-emerald-500 text-[9px] lowercase font-mono">(valid date locked)</span>
+                  )}
                 </label>
                 <input
-                  type="date"
-                  min="2016-08-08"
-                  max={todayDateStr}
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  className="w-full bg-[#1c1c1c] border border-[#FF0500]/40 hover:border-red-400 focus:border-[#FF0500] focus:outline-none focus:ring-1 focus:ring-[#FF0500] px-3.5 py-2.5 text-xs font-mono text-agt-orange rounded-xl"
+                  type="text"
+                  placeholder="DD/MM/YYYY"
+                  maxLength={10}
+                  value={rawStartDate}
+                  onChange={(e) => setRawStartDate(formatToDDMMYYYY(e.target.value, rawStartDate))}
+                  className={`w-full bg-[#1c1c1c] border focus:outline-none focus:ring-1 px-3.5 py-2.5 text-xs font-mono text-agt-orange rounded-xl ${
+                    rawStartDate && !isRawDateValid(rawStartDate)
+                      ? 'border-red-500 focus:border-red-500 focus:ring-red-500/30'
+                      : isRawDateComplete(rawStartDate) && isRawDateValid(rawStartDate)
+                      ? 'border-emerald-500/60 focus:border-emerald-500 focus:ring-emerald-500/30'
+                      : 'border-[#FF0500]/40 hover:border-red-400 focus:border-[#FF0500] focus:ring-[#FF0500]/30'
+                  }`}
                 />
               </div>
 
               <div className="flex flex-col gap-2">
-                <label className="text-[10px] uppercase tracking-wider text-agt-orange/60 font-bold flex items-center gap-1.5">
-                  <Calendar className="w-3.5 h-3.5 text-red-500" />
-                  Earth End Date (Optional)
+                <label className="text-[10px] uppercase tracking-wider text-agt-orange/60 font-bold flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <Calendar className="w-3.5 h-3.5 text-red-500" />
+                    Earth End Date (Optional)
+                  </span>
+                  {rawEndDate && !isRawDateValid(rawEndDate) && (
+                    <span className="text-red-500 text-[9px] lowercase font-mono">(! invalid calendar date)</span>
+                  )}
+                  {isRawDateComplete(rawEndDate) && isRawDateValid(rawEndDate) && (
+                    <span className="text-emerald-500 text-[9px] lowercase font-mono">(valid date locked)</span>
+                  )}
                 </label>
                 <input
-                  type="date"
-                  min="2016-08-08"
-                  max={todayDateStr}
-                  value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                  className="w-full bg-[#1c1c1c] border border-[#FF0500]/40 hover:border-red-400 focus:border-[#FF0500] focus:outline-none focus:ring-1 focus:ring-[#FF0500] px-3.5 py-2.5 text-xs font-mono text-agt-orange rounded-xl"
+                  type="text"
+                  placeholder="DD/MM/YYYY"
+                  maxLength={10}
+                  value={rawEndDate}
+                  onChange={(e) => setRawEndDate(formatToDDMMYYYY(e.target.value, rawEndDate))}
+                  className={`w-full bg-[#1c1c1c] border focus:outline-none focus:ring-1 px-3.5 py-2.5 text-xs font-mono text-agt-orange rounded-xl ${
+                    rawEndDate && !isRawDateValid(rawEndDate)
+                      ? 'border-red-500 focus:border-red-500 focus:ring-red-500/30'
+                      : isRawDateComplete(rawEndDate) && isRawDateValid(rawEndDate)
+                      ? 'border-emerald-500/60 focus:border-emerald-500 focus:ring-emerald-500/30'
+                      : 'border-[#FF0500]/40 hover:border-red-400 focus:border-[#FF0500] focus:ring-[#FF0500]/30'
+                  }`}
                 />
               </div>
 
@@ -755,23 +902,69 @@ export default function App() {
                 </select>
               </div>
 
-              {/* Event Significance Selector */}
+              {/* Event Significance Selector with Match Type toggle */}
               <div className="flex flex-col gap-2">
-                <label className="text-[10px] uppercase tracking-wider text-agt-orange/60 font-bold">
-                  Minimum Significance Threshold
-                </label>
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] uppercase tracking-wider text-agt-orange/60 font-bold">
+                    Event Significance
+                  </label>
+                  
+                  {/* Matching mode toggle controller */}
+                  <div className="flex gap-1 bg-[#161616] p-0.5 border border-white/5 rounded-md text-[8px] uppercase tracking-wider font-mono">
+                    <button
+                      type="button"
+                      onClick={() => setSignificanceMatchType('threshold')}
+                      className={`py-0.5 px-1.5 rounded transition-all font-bold ${
+                        significanceMatchType === 'threshold'
+                          ? 'bg-red-600 text-white'
+                          : 'text-agt-orange/40 hover:text-white'
+                      }`}
+                      title="Show selected significance and any more important/broader events"
+                    >
+                      Threshold &amp; Higher
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSignificanceMatchType('exact')}
+                      className={`py-0.5 px-1.5 rounded transition-all font-bold ${
+                        significanceMatchType === 'exact'
+                          ? 'bg-red-600 text-white'
+                          : 'text-agt-orange/40 hover:text-white'
+                      }`}
+                      title="Show only records having exactly the selected significance"
+                    >
+                      Exact Match
+                    </button>
+                  </div>
+                </div>
+
                 <select
                   value={significanceFilter}
                   onChange={(e) => setSignificanceFilter(e.target.value)}
                   className="w-full bg-[#1c1c1c] border border-[#FF0500]/40 hover:border-red-400 focus:border-[#FF0500] focus:outline-none focus:ring-1 focus:ring-[#FF0500] px-3.5 py-2.5 text-xs font-sans text-agt-orange rounded-xl cursor-pointer"
                 >
                   <option value="ALL">ALL (Clearance level)</option>
-                  <option value="Era">Era Epochs Only</option>
-                  <option value="Epic">Epic Events & Higher</option>
-                  <option value="Major">Major Events & Higher</option>
-                  <option value="Minor">Minor Events & Higher</option>
-                  <option value="Detail Event">Detailed Logs & Higher</option>
-                  <option value="Trivial">Trivial logs & Higher</option>
+                  {significanceMatchType === 'exact' ? (
+                    <>
+                      <option value="Era">Era Epochs Only</option>
+                      <option value="Epic">Epic Events Only</option>
+                      <option value="Major">Major Events Only</option>
+                      <option value="Minor">Minor Events Only</option>
+                      <option value="Event Detail">Event Details Only</option>
+                      <option value="Low">Low Significance Only</option>
+                      <option value="Insignificant">Insignificant Only</option>
+                    </>
+                  ) : (
+                    <>
+                      <option value="Era">Era Epochs Only</option>
+                      <option value="Epic">Epic Events &amp; Higher</option>
+                      <option value="Major">Major Events &amp; Higher</option>
+                      <option value="Minor">Minor Events &amp; Higher</option>
+                      <option value="Event Detail">Event Details &amp; Higher</option>
+                      <option value="Low">Low Significance &amp; Higher</option>
+                      <option value="Insignificant">Insignificant &amp; Higher</option>
+                    </>
+                  )}
                 </select>
               </div>
 
@@ -845,13 +1038,16 @@ export default function App() {
               </div>
               
               {/* Reset filter helpers */}
-              {(startDate || endDate || activityFilter !== 'ALL' || significanceFilter !== 'ALL' || civFilter) && (
+              {(rawStartDate || rawEndDate || activityFilter !== 'ALL' || significanceFilter !== 'ALL' || civFilter) && (
                 <button
                   onClick={() => {
                     setStartDate('');
                     setEndDate('');
+                    setRawStartDate('');
+                    setRawEndDate('');
                     setActivityFilter('ALL');
                     setSignificanceFilter('ALL');
+                    setSignificanceMatchType('threshold');
                     setCivFilter('');
                   }}
                   className="px-4 py-1.5 bg-[#FF0500]/10 border border-[#FF0500] hover:bg-[#FF0500] hover:text-white transition-colors text-white font-bold text-[9px] uppercase tracking-wider rounded-lg cursor-pointer"
@@ -1181,46 +1377,83 @@ export default function App() {
                       </div>
                     )}
 
-                    {/* Media Block Placement from Column Y */}
-                    {activeMedia.type !== 'unsupported' && activeMedia.src && (
-                      <div className="my-6 space-y-2">
-                        <div className="overflow-hidden rounded-xl border border-agt-orange/20 bg-black/40 shadow-inner flex justify-center items-center">
-                          {activeMedia.type === 'youtube' ? (
-                            <iframe
-                              src={`${activeMedia.src}?enablejsapi=1&origin=${encodeURIComponent(window.location.origin)}`}
-                              className="w-full aspect-video rounded-xl"
-                              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                              allowFullScreen
-                              referrerPolicy="strict-origin-when-cross-origin"
-                            />
-                          ) : (
-                            <img
-                              src={activeMedia.src}
-                              alt={activeEvent[26] || "Alliance historical archives render"}
-                              className="w-full max-h-[380px] object-contain rounded-xl"
-                              referrerPolicy="no-referrer"
-                              onError={(e) => {
-                                (e.target as HTMLImageElement).style.display = 'none';
-                              }}
-                            />
-                          )}
-                        </div>
-                        
-                        {/* Caption and Credits directly below */}
-                        {(activeEvent[26] || activeEvent[25]) && (
-                          <div className="px-2 py-1 text-center space-y-1">
-                            {activeEvent[26] && (
-                              <p className="text-xs text-agt-orange/80 font-sans tracking-wide">
-                                {activeEvent[26]}
-                              </p>
-                            )}
-                            {activeEvent[25] && (
-                              <p className="text-[10px] text-[#FF0500] italic font-mono uppercase tracking-widest">
-                                ARCHIVE CREDIT: {activeEvent[25]}
-                              </p>
+                    {/* Media Block Placement from Column Y, AB, AE sequentially */}
+                    {activeMediaList.length > 0 && (
+                      <div className="space-y-6">
+                        {activeMediaList.map((media, mIdx) => (
+                          <div key={mIdx} className="space-y-2 border border-white/5 bg-black/20 rounded-xl p-3">
+                            <div className="overflow-hidden rounded-xl border border-agt-orange/20 bg-black/40 shadow-inner flex justify-center items-center relative group">
+                              {media.type === 'youtube' ? (
+                                <div className="w-full relative">
+                                  <iframe
+                                    src={`${media.src}?enablejsapi=1&origin=${encodeURIComponent(window.location.origin)}`}
+                                    className="w-full aspect-video rounded-xl"
+                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                                    allowFullScreen
+                                    referrerPolicy="strict-origin-when-cross-origin"
+                                  />
+                                  <a 
+                                    href={media.src.replace('/embed/', '/watch?v=')} 
+                                    target="_blank" 
+                                    rel="noopener noreferrer"
+                                    className="absolute top-2 right-2 p-1.5 bg-black/80 hover:bg-red-500 hover:text-white text-white rounded-md text-[9px] uppercase font-mono transition-colors flex items-center gap-1 border border-white/10"
+                                  >
+                                    <ExternalLink className="w-3 h-3" />
+                                    <span>Watch Video</span>
+                                  </a>
+                                </div>
+                              ) : (
+                                <a
+                                  href={media.src}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="w-full block hover:scale-[1.005] active:scale-[0.995] transition-transform relative cursor-pointer"
+                                  title="Click to view full screen in a new tab"
+                                >
+                                  <img
+                                    src={media.src}
+                                    alt={media.caption || `Alliance historical archives render ${mIdx + 1}`}
+                                    className="w-full max-h-[380px] object-contain rounded-xl mx-auto"
+                                    referrerPolicy="no-referrer"
+                                    onError={(e) => {
+                                      (e.target as HTMLImageElement).style.display = 'none';
+                                    }}
+                                  />
+                                  <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-3 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-between pointer-events-none rounded-b-xl">
+                                    <span className="text-[10px] text-agt-orange/80 uppercase font-mono tracking-wider flex items-center gap-1">
+                                      <ExternalLink className="w-3 h-3 text-red-500" />
+                                      Open Image Full Screen
+                                    </span>
+                                  </div>
+                                </a>
+                              )}
+                            </div>
+                            
+                            {/* Caption and Credits directly below */}
+                            {(media.caption || media.credit) && (
+                              <div className="px-2 py-1 text-center space-y-1">
+                                {media.caption && (
+                                  <p className="text-xs text-agt-orange/80 font-sans tracking-wide">
+                                    {media.caption}
+                                  </p>
+                                )}
+                                {media.credit && (
+                                  <p className="text-[10px] text-[#FF0500] italic font-mono uppercase tracking-widest">
+                                    ARCHIVE CREDIT:{' '}
+                                    {isHtmlString(media.credit) ? (
+                                      <span 
+                                        className="inline [&_a]:underline [&_a]:text-red-500 [&_a]:hover:text-white [&_a]:transition-colors cursor-pointer"
+                                        dangerouslySetInnerHTML={{ __html: media.credit }}
+                                      />
+                                    ) : (
+                                      media.credit
+                                    )}
+                                  </p>
+                                )}
+                              </div>
                             )}
                           </div>
-                        )}
+                        ))}
                       </div>
                     )}
 
@@ -1278,7 +1511,7 @@ export default function App() {
                   {/* Bottom Left Corner: Significance badge */}
                   <div className="flex items-center">
                     <div className={`px-3 py-1 text-[9px] uppercase tracking-[0.15em] rounded-full border ${getSignificanceStyle(activeEvent?.[7] || '')}`}>
-                      {activeEvent?.[7] || 'Trivial'}
+                      {activeEvent?.[7] || 'Insignificant'}
                     </div>
                   </div>
 
