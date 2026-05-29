@@ -40,7 +40,7 @@ const parseMediaColumn = (val: string): MediaSource => {
   if (ytMatch && ytMatch[1]) {
     return {
       type: 'youtube',
-      src: `https://www.youtube.com/embed/${ytMatch[1]}`
+      src: `https://www.youtube-nocookie.com/embed/${ytMatch[1]}`
     };
   }
 
@@ -1187,11 +1187,11 @@ export default function App() {
                         <div className="overflow-hidden rounded-xl border border-agt-orange/20 bg-black/40 shadow-inner flex justify-center items-center">
                           {activeMedia.type === 'youtube' ? (
                             <iframe
-                              src={activeMedia.src}
+                              src={`${activeMedia.src}?enablejsapi=1&origin=${encodeURIComponent(window.location.origin)}`}
                               className="w-full aspect-video rounded-xl"
                               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                               allowFullScreen
-                              referrerPolicy="no-referrer"
+                              referrerPolicy="strict-origin-when-cross-origin"
                             />
                           ) : (
                             <img
