@@ -1327,7 +1327,7 @@ export default function App() {
                         </div>
 
                         {/* Subtitle Line (Description) */}
-                        <p className="text-lg text-agt-orange leading-relaxed font-serif border-l-2 border-purple-500/40 pl-4 py-1">
+                        <p className="text-lg text-agt-orange leading-relaxed font-serif border-l-2 border-purple-500/40 pl-4 py-1 whitespace-pre-line">
                           {activeEvent[4] || 'Era historical metadata body.'}
                         </p>
 
@@ -1365,7 +1365,7 @@ export default function App() {
 
                         {/* Event description with spacer and traveler italics */}
                         <div className="text-sm md:text-base text-agt-orange/90 leading-relaxed pt-2">
-                          <p className="inline">
+                          <p className="inline whitespace-pre-line">
                             {activeEvent[4] || 'No event description is recorded for this entry.'}
                           </p>
                           {activeEvent[5] && (
