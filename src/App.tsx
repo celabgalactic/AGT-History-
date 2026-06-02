@@ -20,9 +20,11 @@ import {
   MapPin,
   ExternalLink,
   Lock,
-  BookOpen
+  BookOpen,
+  FileText
 } from 'lucide-react';
 import Papa from 'papaparse';
+import { jsPDF } from "jspdf";
 
 // Media parser utility mapping Drive files & YouTube videos
 interface MediaSource {
@@ -184,6 +186,56 @@ const isHtmlString = (str: string): boolean => {
   return /<[a-z][\s\S]*>/i.test(str);
 };
 
+// Image loader with custom loading spinner and reset
+interface ImageLoaderProps {
+  src: string;
+  alt: string;
+}
+
+const ImageLoader = ({ src, alt }: ImageLoaderProps) => {
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    setLoaded(false);
+    setError(false);
+  }, [src]);
+
+  return (
+    <div className="relative w-full flex justify-center items-center min-h-[150px]">
+      {!loaded && !error && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/20 rounded-xl py-8 z-10">
+          <img 
+            src="/AGTicon.png" 
+            alt="Loading" 
+            className="w-10 h-10 object-contain animate-spin"
+            referrerPolicy="no-referrer"
+          />
+          <span className="text-[10px] uppercase font-mono tracking-widest text-agt-orange/60">
+            Fetching Image Archive...
+          </span>
+        </div>
+      )}
+      {!error ? (
+        <img
+          src={src}
+          alt={alt}
+          className={`w-full max-h-[380px] object-contain rounded-xl mx-auto transition-opacity duration-300 ${
+            loaded ? 'opacity-100' : 'opacity-0 absolute pointer-events-none'
+          }`}
+          referrerPolicy="no-referrer"
+          onLoad={() => setLoaded(true)}
+          onError={() => setError(true)}
+        />
+      ) : (
+        <div className="text-center py-4 text-xs text-red-500 font-mono">
+          [Image archive download error]
+        </div>
+      )}
+    </div>
+  );
+};
+
 // Color coding styles for Event Type tags
 const getEventTypeStyle = (type: string): string => {
   const t = String(type || '').trim().toLowerCase();
@@ -197,6 +249,7 @@ const getEventTypeStyle = (type: string): string => {
     'colony': 'bg-teal-500/15 border-teal-500/40 text-teal-300',
     'migration': 'bg-pink-500/15 border-pink-500/40 text-pink-300',
     'political': 'bg-indigo-500/15 border-indigo-500/40 text-indigo-300',
+    'community event': 'bg-amber-600/15 border-amber-500/45 text-amber-300',
   };
 
   if (PRESET_EVENT_TYPES[t]) return PRESET_EVENT_TYPES[t];
@@ -255,6 +308,408 @@ const getSignificanceStyle = (sig: string): string => {
   }
 };
 
+const SingleTimelineEventDetailModal = ({
+  event,
+  onClose
+}: {
+  event: string[];
+  onClose: () => void;
+}) => {
+  const getEventStartDateLocal = (row: string[]): Date | null => {
+    const dStr = row[18];
+    const mStr = row[19];
+    const yStr = row[20];
+    if (dStr && mStr && yStr) {
+      const day = parseInt(dStr.trim(), 10);
+      const month = parseInt(mStr.trim(), 10);
+      const year = parseInt(yStr.trim(), 10);
+      if (!isNaN(day) && !isNaN(month) && !isNaN(year)) {
+        return new Date(year, month - 1, day);
+      }
+    }
+    return parseSheetDate(row[0]);
+  };
+
+  const getEventEndDateLocal = (row: string[]): Date | null => {
+    const dStr = row[21];
+    const mStr = row[22];
+    const yStr = row[23];
+    if (dStr && mStr && yStr) {
+      const day = parseInt(dStr.trim(), 10);
+      const month = parseInt(mStr.trim(), 10);
+      const year = parseInt(yStr.trim(), 10);
+      if (!isNaN(day) && !isNaN(month) && !isNaN(year)) {
+        return new Date(year, month - 1, day);
+      }
+    }
+    if (row[2] && row[2].trim()) {
+      return parseSheetDate(row[2]);
+    }
+    return getEventStartDateLocal(row);
+  };
+
+  const toAgtStardateLocal = (d: Date | null): string => {
+    if (!d) return '';
+    const epoch = new Date(2016, 7, 8); // 8th August 2016 is Stardate 0.0
+    const diffTime = d.getTime() - epoch.getTime();
+    const diffDays = diffTime / (1000 * 60 * 60 * 24);
+    return diffDays.toFixed(2);
+  };
+
+  const isEraEvent = useMemo(() => {
+    const isEraFlag = String(event[33] || '').trim().toLowerCase() === 'y';
+    const isEraSig = String(event[7] || '').trim().toLowerCase() === 'era';
+    return isEraFlag || isEraSig;
+  }, [event]);
+
+  const activeEventCivTags = useMemo(() => {
+    const civStr = String(event[34] || '').trim();
+    if (!civStr) return [];
+    return civStr.split(/[,;]+/).map(t => t.trim()).filter(Boolean);
+  }, [event]);
+
+  const startStardate = useMemo(() => {
+    const colB = String(event[1] || '').trim();
+    if (colB) return colB;
+    return toAgtStardateLocal(getEventStartDateLocal(event));
+  }, [event]);
+
+  const endStardate = useMemo(() => {
+    const dEnd = getEventEndDateLocal(event);
+    const dStart = getEventStartDateLocal(event);
+    if (!dEnd) return '';
+    if (dStart && dEnd && dStart.getTime() === dEnd.getTime()) {
+      return ''; // single day event
+    }
+    return toAgtStardateLocal(dEnd);
+  }, [event]);
+
+  const agtStardateRangeString = useMemo(() => {
+    if (!startStardate) return '';
+    if (endStardate) {
+        return `${startStardate} - ${endStardate}`;
+    }
+    return startStardate;
+  }, [startStardate, endStardate]);
+
+  const locationText = useMemo(() => {
+    const system = String(event[8] || '').trim();
+    const region = String(event[9] || '').trim();
+    const galaxy = String(event[10] || '').trim();
+
+    const parts = [];
+    if (system) parts.push(system);
+    if (region) parts.push(region);
+    if (galaxy) parts.push(galaxy);
+
+    return parts.join(', ');
+  }, [event]);
+
+  const activeMediaList = useMemo(() => {
+    const mediaSlots = [
+      { urlIdx: 24, creditIdx: 25, captionIdx: 26 },
+      { urlIdx: 27, creditIdx: 28, captionIdx: 29 },
+      { urlIdx: 30, creditIdx: 31, captionIdx: 32 }
+    ];
+
+    const results = [];
+    for (const slot of mediaSlots) {
+      const urlVal = String(event[slot.urlIdx] || '').trim();
+      if (urlVal) {
+        const parsed = parseMediaColumn(urlVal);
+        if (parsed.type !== 'unsupported' && parsed.src) {
+          results.push({
+            ...parsed,
+            credit: String(event[slot.creditIdx] || '').trim(),
+            caption: String(event[slot.captionIdx] || '').trim()
+          });
+        }
+      }
+    }
+    return results;
+  }, [event]);
+
+  const referenceUrlsList = useMemo(() => {
+    const references: string[] = [];
+    for (let i = 11; i <= 16; i++) {
+      const val = String(event[i] || '').trim();
+      if (val && (val.startsWith('http') || val.startsWith('www.'))) {
+        references.push(val);
+      }
+    }
+    return references;
+  }, [event]);
+
+  const getDisplayUrlLabel = (rawUrl: string): string => {
+    try {
+      const parsed = new URL(rawUrl);
+      let hostname = parsed.hostname.replace('www.', '');
+      if (hostname.length > 25) {
+        hostname = hostname.substring(0, 22) + '...';
+      }
+      return hostname + parsed.pathname.substring(0, 10);
+    } catch {
+      return 'EXTERNAL ARCHIVE LINK';
+    }
+  };
+
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  return (
+    <div className="fixed inset-0 z-[105] flex items-center justify-center p-4">
+      {/* Dark glass backdrop layout */}
+      <motion.div 
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        onClick={onClose}
+        className="absolute inset-0 bg-black/95 backdrop-blur-md"
+      />
+
+      {/* Content card popup */}
+      <motion.div 
+        initial={{ scale: 0.9, y: 30, opacity: 0 }}
+        animate={{ scale: 1, y: 0, opacity: 1 }}
+        exit={{ scale: 0.9, y: 30, opacity: 0 }}
+        transition={{ type: "spring", damping: 25, stiffness: 220 }}
+        className="relative max-w-3xl w-full max-h-[90vh] bg-[#0c0c0c]/95 border-2 border-agt-orange/30 rounded-2xl shadow-[0_0_50px_rgba(255,180,81,0.15)] flex flex-col z-[110] overflow-hidden"
+      >
+        <div className="absolute top-0 left-0 right-0 h-[3px] bg-gradient-to-r from-transparent via-[#FFB451] to-transparent"></div>
+
+        {/* Close Button element */}
+        <button 
+          onClick={onClose}
+          className="absolute top-4 right-4 p-2 bg-red-950/40 hover:bg-red-500 hover:text-white text-[#FF0500] border border-red-500/30 rounded-lg transition-all cursor-pointer z-[120]"
+          title="Exit Detail View"
+        >
+          <X className="w-5 h-5" />
+        </button>
+
+        {/* Popup Header */}
+        <div className="px-6 py-4 border-b border-agt-orange/15 bg-black/40 flex items-center justify-between text-[10px] tracking-widest font-mono uppercase text-[#FFB451]/50">
+          <div className="flex items-center gap-1.5 font-mono">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            Chronology Archive Node [Timeline Selection]
+          </div>
+        </div>
+
+        {/* Central text and content element - with scroll capability built-in */}
+        <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-6 md:p-8 space-y-6 custom-scrollbar">
+          
+          {/* ERA Event Layout */}
+          {isEraEvent ? (
+            <div className="space-y-6">
+              {/* Title line */}
+              <div className="space-y-1">
+                <span className="text-[10px] uppercase font-bold tracking-[0.3em] text-purple-400">Archival Era Transition</span>
+                <h3 className="text-3xl md:text-4xl font-light text-purple-200 tracking-tight leading-none uppercase pr-8">
+                  {event[3] || 'Untitled Era Event'}
+                </h3>
+              </div>
+
+              {/* Subtitle Line (Description) */}
+              <p className="text-lg text-agt-orange leading-relaxed font-serif border-l-2 border-purple-500/40 pl-4 py-1 whitespace-pre-line">
+                {event[4] || 'Era historical metadata body.'}
+              </p>
+
+              {/* AGT Stardate Range */}
+              {agtStardateRangeString && (
+                <div className="flex items-center gap-2 text-xs font-mono text-purple-300">
+                  <span className="text-purple-400 font-bold uppercase tracking-wider">Epoch Stardate:</span>
+                  <span>{agtStardateRangeString}</span>
+                </div>
+              )}
+            </div>
+          ) : (
+            /* Standard (Non-Era) Event Layout */
+            <div className="space-y-4">
+              {/* Title Line */}
+              <h3 className="text-2xl md:text-3xl font-semibold text-white tracking-tight leading-snug uppercase pr-8">
+                {event[3] || 'Untitled Record Log'}
+              </h3>
+
+              {/* AGT Stardate Range */}
+              {agtStardateRangeString && (
+                <div className="flex items-center gap-2 text-xs font-mono text-agt-orange/65 border-b border-agt-orange/10 pb-2">
+                  <span className="text-[#FF0500] font-bold uppercase tracking-wider">AGT Stardate:</span>
+                  <span>{agtStardateRangeString}</span>
+                </div>
+              )}
+
+              {/* Event Location Line (If available) */}
+              {locationText && (
+                <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider font-sans text-agt-orange/50">
+                  <MapPin className="w-3.5 h-3.5 text-[#FFB451]/60 shrink-0" />
+                  <span>Location: {locationText}</span>
+                </div>
+              )}
+
+              {/* Event description */}
+              <div className="text-sm md:text-base text-agt-orange/90 leading-relaxed pt-2">
+                <p className="inline whitespace-pre-line">
+                  {event[4] || 'No event description is recorded for this entry.'}
+                </p>
+                {event[5] && (
+                  <span className="whitespace-nowrap italic text-[#FFB451]/60 font-sans">
+                    {" "}&mdash; <span className="font-semibold underline decoration-[#FF0500]/30">{event[5]}</span>
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Media Block Placement from Column Y, AB, AE sequentially */}
+          {activeMediaList.length > 0 && (
+            <div className="space-y-6">
+              {activeMediaList.map((media, mIdx) => (
+                <div key={mIdx} className="space-y-2 border border-white/5 bg-black/20 rounded-xl p-3">
+                  <div className="overflow-hidden rounded-xl border border-agt-orange/20 bg-black/40 shadow-inner flex justify-center items-center relative group">
+                    {media.type === 'youtube' ? (
+                      <div className="w-full relative">
+                        <iframe
+                          src={`${media.src}?enablejsapi=1&origin=${encodeURIComponent(window.location.origin)}`}
+                          className="w-full aspect-video rounded-xl"
+                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                          allowFullScreen
+                          referrerPolicy="strict-origin-when-cross-origin"
+                        />
+                        <a 
+                          href={media.src.replace('/embed/', '/watch?v=')} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="absolute top-2 right-2 p-1.5 bg-black/80 hover:bg-red-500 hover:text-white text-white rounded-md text-[9px] uppercase font-mono transition-colors flex items-center gap-1 border border-white/10"
+                        >
+                          <ExternalLink className="w-3 h-3" />
+                          <span>Watch Video</span>
+                        </a>
+                      </div>
+                    ) : (
+                      <a
+                        href={media.src}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="w-full block hover:scale-[1.005] active:scale-[0.995] transition-transform relative cursor-pointer"
+                        title="Click to view full screen in a new tab"
+                      >
+                        <ImageLoader
+                          src={media.src}
+                          alt={media.caption || `Alliance historical archives render ${mIdx + 1}`}
+                        />
+                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-3 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-between pointer-events-none rounded-b-xl">
+                          <span className="text-[10px] text-agt-orange/80 uppercase font-mono tracking-wider flex items-center gap-1">
+                            <ExternalLink className="w-3 h-3 text-red-500" />
+                            Open Image Full Screen
+                          </span>
+                        </div>
+                      </a>
+                    )}
+                  </div>
+                  
+                  {/* Caption and Credits directly below */}
+                  {(media.caption || media.credit) && (
+                    <div className="px-2 py-1 text-center space-y-1">
+                      {media.caption && (
+                        <p className="text-xs text-agt-orange/80 font-sans tracking-wide">
+                          {media.caption}
+                        </p>
+                      )}
+                      {media.credit && (
+                        <p className="text-[10px] text-[#FF0500] italic font-mono uppercase tracking-widest">
+                          ARCHIVE CREDIT:{' '}
+                          {isHtmlString(media.credit) ? (
+                            <span 
+                              className="inline [&_a]:underline [&_a]:text-red-500 [&_a]:hover:text-white [&_a]:transition-colors cursor-pointer"
+                              dangerouslySetInnerHTML={{ __html: media.credit }}
+                            />
+                          ) : (
+                            media.credit
+                          )}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* External References link lists */}
+          {referenceUrlsList.length > 0 && (
+            <div className="pt-4 border-t border-white/5 space-y-3">
+              <h4 className="text-[10px] uppercase font-bold tracking-widest text-[#FFB451]/40 flex items-center gap-1">
+                <ExternalLink className="w-3 h-3 text-red-500" />
+                ARCHIVAL REFERENCES
+              </h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[10px] uppercase tracking-wider font-mono">
+                {referenceUrlsList.map((url, index) => (
+                  <a
+                    key={index}
+                    href={url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="p-2 border border-agt-orange/15 bg-black/30 hover:bg-[#FF0500]/15 hover:border-[#FF0500] hover:text-white transition-all rounded-lg flex items-center justify-between group"
+                  >
+                    <span className="truncate pr-4">{getDisplayUrlLabel(url)}</span>
+                    <ExternalLink className="w-3 h-3 shrink-0 text-red-500 group-hover:text-white" />
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Civilization Tags Block */}
+          {activeEventCivTags.length > 0 && (
+            <div className="pt-4 border-t border-white/5 space-y-2">
+              <h4 className="text-[10px] uppercase font-bold tracking-widest text-[#FFB451]/40 flex items-center gap-1.5 font-mono">
+                <Search className="w-3 h-3 text-red-500" />
+                CIVILIZATIONS
+              </h4>
+              <div className="flex flex-wrap gap-2 pt-1">
+                {activeEventCivTags.map((tag, idx) => (
+                  <span 
+                    key={idx}
+                    className="px-2.5 py-1 bg-red-950/30 border border-red-500/20 text-agt-orange/90 rounded-lg text-xs font-mono tracking-wide"
+                  >
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Popup controls footer row */}
+        <div className="px-6 py-5 border-t border-agt-orange/15 bg-black/60 flex items-center justify-between min-h-[64px] relative">
+          
+          {/* Bottom Left Corner: Significance badge */}
+          <div className="flex items-center">
+            <div className={`px-2.5 py-1 text-[9px] uppercase tracking-[0.15em] rounded-full border ${getSignificanceStyle(event[7] || '')}`}>
+              {event[7] || 'Insignificant'}
+            </div>
+          </div>
+
+          {/* Close button at center/right */}
+          <div>
+            <button
+              onClick={onClose}
+              className="px-4 py-1.5 bg-[#FF0500]/20 border border-[#FF0500] hover:bg-[#FF0500] hover:text-white transition-colors text-white font-bold text-[10px] uppercase tracking-wider rounded-lg cursor-pointer"
+            >
+              Close Record
+            </button>
+          </div>
+
+          {/* Bottom Right Corner: Event type badge */}
+          <div className="flex items-center">
+            <div className={`px-2.5 py-1 text-[9px] uppercase tracking-[0.15em] rounded-full border ${getEventTypeStyle(event[17] || 'Trivial')}`}>
+              {event[17] || 'Log Record'}
+            </div>
+          </div>
+        </div>
+      </motion.div>
+    </div>
+  );
+};
+
 export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [audioEnabled, setAudioEnabled] = useState<boolean>(() => {
@@ -306,6 +761,12 @@ export default function App() {
   const [civFilter, setCivFilter] = useState('');
   const [showAutocomplete, setShowAutocomplete] = useState(false);
   const autocompleteRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // Major Timeline state managers
+  const [showMajorTimeline, setShowMajorTimeline] = useState(false);
+  const [selectedTimelineEvent, setSelectedTimelineEvent] = useState<string[] | null>(null);
+  const [pdfExporting, setPdfExporting] = useState(false);
 
   // Sync custom formatted dates
   useEffect(() => {
@@ -329,6 +790,13 @@ export default function App() {
   // Custom fullscreen story popup controllers
   const [isStoryActive, setIsStoryActive] = useState(false);
   const [currentEventIndex, setCurrentEventIndex] = useState(0);
+
+  // Scroll popup details to top when event index navigates
+  useEffect(() => {
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = 0;
+    }
+  }, [currentEventIndex]);
 
   // Maximum allowed system date (today) in YYYY-MM-DD
   const todayDateStr = useMemo(() => {
@@ -500,6 +968,8 @@ export default function App() {
         if (typeStr) typesSet.add(typeStr);
       }
     });
+    // Add custom "Community Event" category as well
+    typesSet.add("Community Event");
     return Array.from(typesSet).sort();
   }, [data]);
 
@@ -520,7 +990,10 @@ export default function App() {
 
   // Compute matching suggestions for the autocomplete
   const civSuggestions = useMemo(() => {
-    const query = civFilter.trim().toLowerCase();
+    let query = civFilter.trim().toLowerCase();
+    if (query === 'agt') {
+      query = 'alliance of galactic travellers';
+    }
     if (!query || query === 'all') return [];
     return civilizationTagsList.filter(tag => 
       tag.toLowerCase().includes(query) && tag.toLowerCase() !== query
@@ -577,7 +1050,10 @@ export default function App() {
       }
 
       // 4. Civilization Tag checking
-      const queryCiv = civFilter.trim().toLowerCase();
+      let queryCiv = civFilter.trim().toLowerCase();
+      if (queryCiv === 'agt') {
+        queryCiv = 'alliance of galactic travellers';
+      }
       if (queryCiv && queryCiv !== 'all') {
         const rowCivsStr = String(row[34] || '').trim().toLowerCase();
         if (!rowCivsStr.includes(queryCiv)) {
@@ -602,6 +1078,325 @@ export default function App() {
     });
     return events;
   }, [filteredRecords]);
+
+  // Major Timeline Events: filtered by dates, civilization, and category. Ignored significance criteria, but only allows ERA, EPIC, Major.
+  const timelineEvents = useMemo(() => {
+    // Only parse rows where Column G (index 6, Use of timeline) equals "Y"
+    const timelineRows = data.filter(row => row[6] && row[6].trim().toUpperCase() === 'Y');
+
+    const filtered = timelineRows.filter(row => {
+      // 1. Date Range checking
+      if (!checkEventDateMatches(row, startDate, endDate)) {
+        return false;
+      }
+
+      // 2. Category selection check
+      if (activityFilter !== 'ALL') {
+        const type = String(row[17] || '').trim().toLowerCase();
+        if (type !== activityFilter.toLowerCase()) {
+          return false;
+        }
+      }
+
+      // 3. Ignore the Event significance criteria, but only show ERA, EPIC, and Major
+      const rowSig = String(row[7] || '').trim().toLowerCase();
+      if (!['era', 'epic', 'major'].includes(rowSig)) {
+        return false;
+      }
+
+      // 4. Civilization Tag checking
+      let queryCiv = civFilter.trim().toLowerCase();
+      if (queryCiv === 'agt') {
+        queryCiv = 'alliance of galactic travellers';
+      }
+      if (queryCiv && queryCiv !== 'all') {
+        const rowCivsStr = String(row[34] || '').trim().toLowerCase();
+        if (!rowCivsStr.includes(queryCiv)) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+
+    const sorted = [...filtered];
+    sorted.sort((a, b) => {
+      const dateA = getEventStartDate(a);
+      const dateB = getEventStartDate(b);
+      if (!dateA && !dateB) return 0;
+      if (!dateA) return 1;
+      if (!dateB) return -1;
+      return dateA.getTime() - dateB.getTime();
+    });
+    return sorted;
+  }, [data, startDate, endDate, activityFilter, civFilter]);
+
+  // Format a Date into DD-MMM-YYYY format
+  const formatDdMmmYyyy = (date: Date): string => {
+    const day = String(date.getDate()).padStart(2, '0');
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const mmm = months[date.getMonth()];
+    const yyyy = date.getFullYear();
+    return `${day}-${mmm}-${yyyy}`;
+  };
+
+  // Load local images helper for PDF adding
+  const loadPdfImage = (src: string): Promise<HTMLImageElement | null> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => {
+        console.warn("Failed to load PDF image asset:", src);
+        resolve(null);
+      };
+      img.src = src;
+    });
+  };
+
+  const handleGeneratePDF = async () => {
+    if (timelineEvents.length === 0) return;
+    setPdfExporting(true);
+
+    try {
+      // Load logo, lore book, mini icon, sword, and politics images in parallel to optimize
+      const [officialLogoImg, loreBookImg, miniLogoImg, swordImg, politicsImg] = await Promise.all([
+        loadPdfImage('/AgtOfficialLogo.png'),
+        loadPdfImage('/Lore Book-tx.png'),
+        loadPdfImage('/AGTicon.png'),
+        loadPdfImage('/sword-tx.png'),
+        loadPdfImage('/politics-pp-tx.png')
+      ]);
+
+      const doc = new jsPDF({
+        orientation: "portrait",
+        unit: "mm",
+        format: "a4"
+      });
+
+      const now = new Date();
+      const pad = (num: number) => String(num).padStart(2, '0');
+      const systemDateTimeStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+      const filename = `AGT Timeline - ${systemDateTimeStr}.pdf`;
+
+      let periodText = "All";
+      if (!startDate && !endDate) {
+        periodText = "All";
+      } else {
+        const startDisp = startDate ? toAgtStardate(startDate) : toAgtStardate(now);
+        const endDisp = endDate ? toAgtStardate(endDate) : toAgtStardate(now);
+        periodText = `${startDisp} - ${endDisp}`;
+      }
+
+      let civDisplayVal = civFilter && civFilter.trim() !== '' && civFilter.toLowerCase() !== 'all' ? civFilter : "All";
+      if (civDisplayVal.trim().toLowerCase() === 'agt') {
+        civDisplayVal = "Alliance of Galactic Travellers";
+      }
+      const catDisplay = activityFilter && activityFilter.trim() !== '' && activityFilter.toLowerCase() !== 'all' ? activityFilter : "All";
+      const dateOfReportStr = formatDdMmmYyyy(now);
+
+      // COVER PAGE
+      doc.setFillColor(12, 12, 12); // #0c0c0c
+      doc.rect(0, 0, 210, 297, "F");
+
+      // 20% from top of page is 59.4 mm
+      const logoY = 297 * 0.20;
+      if (officialLogoImg) {
+        const w = 32;
+        const h = 32;
+        const x = (210 - w) / 2;
+        doc.addImage(officialLogoImg, 'PNG', x, logoY, w, h);
+      }
+
+      // Report title text "AGT Timeline Report"
+      doc.setFont("Helvetica", "bold");
+      doc.setFontSize(22);
+      doc.setTextColor(255, 180, 81); // #FFB451 (Gold)
+      doc.text("AGT Timeline Report", 105, logoY + 45, { align: "center" });
+
+      // Filter criteria lines (separate horizontally centered lines)
+      doc.setFont("Helvetica", "normal");
+      doc.setFontSize(11);
+      doc.setTextColor(226, 85, 48); // #E25530 (Orange)
+
+      let startY = logoY + 60;
+      const lineSpacing = 8;
+
+      doc.text(`Timeline Period: ${periodText}`, 105, startY, { align: "center" });
+      startY += lineSpacing;
+      doc.text(`Civilization: ${civDisplayVal}`, 105, startY, { align: "center" });
+      startY += lineSpacing;
+      doc.text(`Category Filter: ${catDisplay}`, 105, startY, { align: "center" });
+      startY += lineSpacing;
+      doc.text(`Date of Report: ${dateOfReportStr}`, 105, startY, { align: "center" });
+
+      // Display "Lore Book-tx.png" below these lines
+      const loreY = startY + 20;
+      if (loreBookImg) {
+        const w = 24;
+        const h = 24;
+        const x = (210 - w) / 2;
+        doc.addImage(loreBookImg, 'PNG', x, loreY, w, h);
+      }
+
+      // SUBSEQUENT PAGES: VERTICAL TIMELINE OF THE MATCHING EVENTS
+      const startNewPage = () => {
+        doc.addPage();
+        doc.setFillColor(12, 12, 12);
+        doc.rect(0, 0, 210, 297, "F");
+
+        // Draw vertical timeline line
+        doc.setDrawColor(255, 5, 0); // FF0500
+        doc.setLineWidth(0.5);
+        doc.line(45, 25, 45, 275);
+      };
+
+      startNewPage();
+      let currentY = 30;
+
+      for (const event of timelineEvents) {
+        const titleText = event[3] || 'Untitled Event';
+        const dateText = event[1] || event[0] || 'Unknown Date';
+        const category = String(event[17] || '').trim().toLowerCase();
+        const sig = String(event[7] || '').trim().toLowerCase();
+        const civStr = String(event[34] || '').trim();
+        const civTags = civStr.split(/[,;]+/).map(t => t.trim()).filter(Boolean);
+        
+        const hasTargetCiv = civTags.some(tag => {
+          const tLower = tag.toLowerCase();
+          return tLower === "alliance of galactic travellers" || tLower.endsWith("travellers foundation");
+        });
+
+        // Determine matching colors from screen template
+        let fillColor = [12, 12, 12]; // #0c0c0c
+        let borderColor = [226, 85, 48]; // #E25530
+        let textColor = [255, 180, 81]; // #FFB451
+
+        if (sig === 'era') {
+          fillColor = [82, 192, 219]; // #52c0db
+          borderColor = [82, 192, 219];
+          textColor = [0, 0, 0];
+        } else if (sig === 'epic' && hasTargetCiv) {
+          fillColor = [255, 180, 81]; // #FFB451
+          borderColor = [255, 180, 81];
+          textColor = [0, 0, 0];
+        } else if (sig === 'major' && hasTargetCiv) {
+          fillColor = [226, 85, 48]; // #E25530
+          borderColor = [226, 85, 48];
+          textColor = [0, 0, 0];
+        }
+
+        // Determine custom category icon
+        let categoryImg: HTMLImageElement | null = null;
+        if (category === 'military') {
+          categoryImg = swordImg;
+        } else if (category === 'political') {
+          categoryImg = politicsImg;
+        }
+        const hasIcon = !!categoryImg;
+
+        const boxStartX = hasIcon ? 56 : 49;
+        const boxWidth = hasIcon ? 134 : 141;
+        const textWidth = hasIcon ? 124 : 131;
+
+        doc.setFont("Helvetica", "bold");
+        doc.setFontSize(10);
+        const lines = doc.splitTextToSize(titleText, textWidth);
+        const boxHeight = Math.max(10.5, 6 + (lines.length * 4.5));
+
+        if (currentY + boxHeight > 270) {
+          startNewPage();
+          currentY = 30;
+        }
+
+        // Draw event box inside page starting after the icon if present
+        doc.setFillColor(fillColor[0], fillColor[1], fillColor[2]);
+        doc.setDrawColor(borderColor[0], borderColor[1], borderColor[2]);
+        doc.setLineWidth(0.4);
+        doc.roundedRect(boxStartX, currentY, boxWidth, boxHeight, 2, 2, "FD");
+
+        // Print category icon if present, vertically centered outside/before the box
+        if (hasIcon && categoryImg) {
+          const iconW = 4.5;
+          const iconH = 4.5;
+          const iconX = 49.5;
+          const iconY = currentY + (boxHeight - iconH) / 2;
+          doc.addImage(categoryImg, 'PNG', iconX, iconY, iconW, iconH);
+        }
+
+        // Print title text in the designated text color
+        doc.setTextColor(textColor[0], textColor[1], textColor[2]);
+        let textY = currentY + 5;
+        const textStartX = boxStartX + 5;
+        lines.forEach((line: string) => {
+          doc.text(line, textStartX, textY);
+          textY += 4.5;
+        });
+
+        // Draw event date aligned right on the left of timeline line
+        const centerY = currentY + (boxHeight / 2);
+        doc.setFont("Helvetica", "bold");
+        doc.setFontSize(9);
+        doc.setTextColor(255, 180, 81); // FFB451
+        doc.text(dateText, 41, centerY + 1, { align: "right" });
+
+        // Draw notch circle on the vertical timeline line (FF0500)
+        doc.setFillColor(fillColor[0], fillColor[1], fillColor[2]);
+        doc.setDrawColor(255, 5, 0); // FF0500
+        doc.setLineWidth(0.6);
+        doc.circle(45, centerY, 1.5, "FD");
+
+        currentY += boxHeight + 6;
+      }
+
+      // Apply header and footer to every page after the cover page
+      const pageCount = doc.getNumberOfPages();
+      for (let i = 2; i <= pageCount; i++) {
+        doc.setPage(i);
+
+        // Header logo
+        if (miniLogoImg) {
+          doc.addImage(miniLogoImg, 'PNG', 20, 10, 8, 8);
+        }
+
+        // Header left text
+        doc.setFont("Helvetica", "bold");
+        doc.setFontSize(10);
+        doc.setTextColor(255, 180, 81); // #FFB451
+        doc.text("AGT Timeline Report", 30, 15);
+
+        // Header right page number
+        doc.setFont("Helvetica", "normal");
+        doc.setFontSize(10);
+        doc.setTextColor(150, 150, 150);
+        doc.text(`${i}`, 190, 15, { align: "right" });
+
+        // Header separator line
+        doc.setDrawColor(255, 5, 0); // FF0500
+        doc.setLineWidth(0.3);
+        doc.line(20, 19, 190, 19);
+
+        // Footer header divider
+        doc.setDrawColor(50, 50, 50);
+        doc.setLineWidth(0.2);
+        doc.line(20, 280, 190, 280);
+
+        // Footer text: "Report Created on:" followed by system formatted date & time
+        doc.setFont("Helvetica", "normal");
+        doc.setFontSize(8);
+        doc.setTextColor(150, 150, 150);
+        doc.text(`Report Created on: ${dateOfReportStr}`, 20, 285);
+      }
+
+      // Keep screen loader spinning for at least 1 second for pristine visuals
+      await new Promise(r => setTimeout(r, 1000));
+
+      doc.save(filename);
+    } catch (e) {
+      console.error("PDF generation failed:", e);
+    } finally {
+      setPdfExporting(false);
+    }
+  };
 
   // Activate the discovery scene
   const handleTriggerStory = () => {
@@ -803,17 +1598,21 @@ export default function App() {
               initial={{ opacity: 0, y: -20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.6 }}
-              className="inline-flex items-center gap-3 px-4 py-1.5 bg-[#FF0500]/10 border border-[#FF0500]/30 rounded-full text-[10px] uppercase tracking-widest text-[#FFB451] font-mono mb-2"
+              className="flex justify-center"
             >
-              <BookOpen className="w-3.5 h-3.5 text-red-500" />
-              Historical Records Scanner
+              <img
+                src="/Lore Book-tx.png"
+                alt="Lore Book"
+                className="h-24 w-auto object-contain mb-2"
+                referrerPolicy="no-referrer"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).className = "hidden";
+                }}
+              />
             </motion.div>
             <h2 className="text-4xl md:text-5xl font-light tracking-tight text-agt-orange">
-              AGT History Archive
+              Galactic Chronology Terminal
             </h2>
-            <p className="text-agt-orange/60 text-xs uppercase tracking-[0.25em] font-medium max-w-md mx-auto">
-              Historical Event Extractor
-            </p>
           </div>
 
           {/* Core filters scanner terminal */}
@@ -977,7 +1776,7 @@ export default function App() {
                 <div className="relative">
                   <input
                     type="text"
-                    placeholder="Search by civilization tag (e.g. Gek, Vy'keen, Korvax - leave blank or 'ALL' for default)"
+                    placeholder="Civilization name, leave blank, or ALL"
                     value={civFilter}
                     onChange={(e) => {
                       setCivFilter(e.target.value);
@@ -1075,17 +1874,23 @@ export default function App() {
               </button>
 
               <button
-                disabled
-                className="flex-1 py-4 bg-transparent border-2 border-dashed border-[#FFB451]/20 text-[#FFB451]/30 rounded-full font-bold text-xs uppercase tracking-[0.2em] transition-all flex items-center justify-center gap-2 cursor-pointer relative group"
-                title="Archival telemetry system offline"
+                type="button"
+                onClick={() => setShowMajorTimeline(true)}
+                disabled={loading || timelineEvents.length === 0}
+                className="flex-1 py-4 bg-[#FF0500] text-white hover:bg-[#ff3330] disabled:opacity-30 disabled:pointer-events-none rounded-full font-black text-xs uppercase tracking-[0.2em] shadow-[0_4px_15px_rgba(255,5,0,0.3)] hover:shadow-[0_0_20px_rgba(255,5,0,0.5)] active:scale-[0.98] transition-all flex items-center justify-center gap-2 cursor-pointer"
               >
-                <Lock className="w-3.5 h-3.5" />
-                <span>Download PDF Export</span>
-                
-                {/* Floating tooltip indicating this is intentionally dormant */}
-                <div className="absolute opacity-0 group-hover:opacity-100 transition-opacity bottom-full mb-2 bg-[#050505] border border-agt-orange/30 text-agt-orange/70 text-[9px] font-bold text-center px-3 py-1.5 rounded-lg w-max shadow-xl pointer-events-none tracking-wider">
-                  SYSTEM OFFLINE / EXPORT CORRUPTED OR DORMANT
-                </div>
+                <Calendar className="w-4 h-4 text-white" />
+                <span>Major Timeline</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleGeneratePDF}
+                disabled={loading || timelineEvents.length === 0}
+                className="flex-1 py-4 bg-[#FF0500] text-white hover:bg-[#ff3330] disabled:opacity-30 disabled:pointer-events-none rounded-full font-black text-xs uppercase tracking-[0.2em] shadow-[0_4px_15px_rgba(255,5,0,0.3)] hover:shadow-[0_0_20px_rgba(255,5,0,0.5)] active:scale-[0.98] transition-all flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <FileText className="w-4 h-4 text-white" />
+                <span>Major Timeline PDF</span>
               </button>
             </div>
           </div>
@@ -1195,9 +2000,8 @@ export default function App() {
 
                 {/* Ambient music control loop */}
                 <div className="pt-4 border-t border-white/5 space-y-3">
-                  <h4 className="text-xs uppercase tracking-widest font-black text-agt-orange/50">Ambience Music System</h4>
-                  <div className="flex items-center justify-between bg-black/30 p-3 rounded-xl border border-white/5">
-                    <div className="text-[10px] uppercase tracking-widest text-agt-orange/30">AGT anthem (Instrumental)</div>
+                  <h4 className="text-xs uppercase tracking-widest font-black text-agt-orange/50">AGT Anthem</h4>
+                  <div className="flex items-center justify-center bg-black/30 p-3 rounded-xl border border-white/5">
                     <button 
                       onClick={() => setAudioEnabled(!audioEnabled)}
                       className={`flex items-center gap-2 px-4 py-2 rounded-lg text-[10px] uppercase tracking-widest font-bold transition-all cursor-pointer ${
@@ -1303,7 +2107,7 @@ export default function App() {
               </div>
 
               {/* Central text and content element - with scroll capability built-in */}
-              <div className="flex-1 overflow-y-auto p-6 md:p-8 space-y-6 custom-scrollbar">
+              <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-6 md:p-8 space-y-6 custom-scrollbar">
                 
                 {sortedEvents.length === 0 ? (
                   <div className="py-20 flex flex-col items-center justify-center text-center space-y-4">
@@ -1410,14 +2214,9 @@ export default function App() {
                                   className="w-full block hover:scale-[1.005] active:scale-[0.995] transition-transform relative cursor-pointer"
                                   title="Click to view full screen in a new tab"
                                 >
-                                  <img
+                                  <ImageLoader
                                     src={media.src}
                                     alt={media.caption || `Alliance historical archives render ${mIdx + 1}`}
-                                    className="w-full max-h-[380px] object-contain rounded-xl mx-auto"
-                                    referrerPolicy="no-referrer"
-                                    onError={(e) => {
-                                      (e.target as HTMLImageElement).style.display = 'none';
-                                    }}
                                   />
                                   <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-3 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-between pointer-events-none rounded-b-xl">
                                     <span className="text-[10px] text-agt-orange/80 uppercase font-mono tracking-wider flex items-center gap-1">
@@ -1551,6 +2350,219 @@ export default function App() {
                   </div>
                 </div>
               )}
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* MAJOR TIMELINE MODAL */}
+      <AnimatePresence>
+        {showMajorTimeline && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowMajorTimeline(false)}
+              className="absolute inset-0 bg-black/95 backdrop-blur-md"
+            />
+
+            <motion.div 
+              initial={{ scale: 0.92, opacity: 0, y: 30 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.92, opacity: 0, y: 30 }}
+              transition={{ type: "spring", damping: 25, stiffness: 220 }}
+              className="relative max-w-4xl w-full h-[85vh] bg-[#0c0c0c] border-2 border-[#FF0500] rounded-2xl flex flex-col z-10 overflow-hidden shadow-[0_0_50px_rgba(255,5,0,0.25)]"
+            >
+              {/* Highlight line top */}
+              <div className="absolute top-0 left-0 right-0 h-[3px] bg-gradient-to-r from-transparent via-[#E25530] to-transparent"></div>
+
+              {/* Close Button element */}
+              <button 
+                onClick={() => setShowMajorTimeline(false)}
+                className="absolute top-4 right-4 p-2 bg-red-950/40 hover:bg-red-500 hover:text-white text-[#FF0500] border border-red-500/30 rounded-lg transition-all cursor-pointer z-[120]"
+                title="Close Timeline"
+                id="close-major-timeline-btn"
+              >
+                <X className="w-5 h-5" />
+              </button>
+
+              {/* Header */}
+              <div className="px-6 py-4 border-b border-[#FF0500]/20 bg-black/40 flex items-center justify-between">
+                <div>
+                  <h3 className="text-xl md:text-2xl font-bold tracking-tight text-agt-orange uppercase">
+                    Major Chronology Timeline
+                  </h3>
+                  <p className="text-[10px] tracking-widest font-mono uppercase text-[#FFB451]/50 mt-1">
+                    Showing Era, Epic & Major events matching criteria ({timelineEvents.length} records)
+                  </p>
+                </div>
+              </div>
+
+              {/* Vertical timeline scrolling content */}
+              <div className="flex-1 overflow-y-auto p-6 md:p-10 custom-scrollbar bg-black/25">
+                {timelineEvents.length === 0 ? (
+                  <div className="py-20 flex flex-col items-center justify-center text-center space-y-4">
+                    <Calendar className="w-12 h-12 text-[#FF0500]/40 animate-pulse" />
+                    <h4 className="text-sm font-bold uppercase tracking-widest text-[#FFB451]">No Chronological Matches</h4>
+                    <p className="text-xs text-agt-orange/50 max-w-sm">
+                      Adjust your start date, end date, civilization filter, or category filter to scan historical timeline records.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="relative pl-6 sm:pl-10">
+                    {/* The vertical timeline line itself in hardcoded hex color FF0500 */}
+                    <div className="absolute left-[3px] sm:left-[19px] top-2 bottom-2 w-0.5 bg-[#FF0500]" />
+
+                    <div className="space-y-8">
+                      {timelineEvents.map((event, idx) => {
+                        const dateText = event[1] || event[0] || 'Unknown Date';
+                        const category = String(event[17] || '').trim().toLowerCase();
+                        const sig = String(event[7] || '').trim().toLowerCase();
+                        const civStr = String(event[34] || '').trim();
+                        const civTags = civStr.split(/[,;]+/).map(t => t.trim()).filter(Boolean);
+                        
+                        const hasTargetCiv = civTags.some(tag => {
+                          const tLower = tag.toLowerCase();
+                          return tLower === "alliance of galactic travellers" || tLower.endsWith("travellers foundation");
+                        });
+
+                        let bgClass = "bg-transparent hover:bg-[#E25530]/5";
+                        let borderClass = "border-[#E25530]";
+                        let textClass = "text-[#FFB451]";
+                        let badgeClass = "bg-black/40 border border-[#E25530]/30 text-[#FFB451]/60";
+
+                        if (sig === 'era') {
+                          bgClass = "bg-[#52c0db] hover:bg-[#52c0db]/90";
+                          borderClass = "border-[#52c0db]";
+                          textClass = "text-black";
+                          badgeClass = "bg-black/15 border border-black/20 text-black/75";
+                        } else if (sig === 'epic' && hasTargetCiv) {
+                          bgClass = "bg-[#FFB451] hover:bg-[#FFB451]/90";
+                          borderClass = "border-[#FFB451]";
+                          textClass = "text-black";
+                          badgeClass = "bg-black/15 border border-black/20 text-black/75";
+                        } else if (sig === 'major' && hasTargetCiv) {
+                          bgClass = "bg-[#E25530] hover:bg-[#E25530]/90";
+                          borderClass = "border-[#E25530]";
+                          textClass = "text-black";
+                          badgeClass = "bg-black/15 border border-black/20 text-black/75";
+                        }
+
+                        return (
+                          <div key={idx} className="relative group flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-6">
+                            {/* Circle notch on the vertical red line */}
+                            <div className="absolute -left-[27px] sm:-left-[25px] top-1.5 sm:top-auto w-3.5 h-3.5 rounded-full bg-[#0c0c0c] border-[3px] border-[#FF0500] group-hover:bg-[#FFB451] group-hover:border-[#E25530] transition-colors z-10" />
+
+                            {/* Event Date alongside box */}
+                            <div className="w-32 shrink-0 text-left sm:text-right font-mono text-xs font-semibold uppercase tracking-wider text-agt-orange/70 select-none">
+                              {dateText}
+                            </div>
+
+                            {/* Preceding category icons */}
+                            {category === 'military' && (
+                              <img
+                                src="/sword-tx.png"
+                                alt="Military"
+                                className="w-5 h-5 object-contain shrink-0"
+                                referrerPolicy="no-referrer"
+                                onError={(e) => {
+                                  (e.target as HTMLImageElement).className = "hidden";
+                                }}
+                              />
+                            )}
+                            {category === 'political' && (
+                              <img
+                                src="/politics-pp-tx.png"
+                                alt="Political"
+                                className="w-5 h-5 object-contain shrink-0"
+                                referrerPolicy="no-referrer"
+                                onError={(e) => {
+                                  (e.target as HTMLImageElement).className = "hidden";
+                                }}
+                              />
+                            )}
+
+                            {/* Timeline button box */}
+                            <button
+                              type="button"
+                              onClick={() => setSelectedTimelineEvent(event)}
+                              className={`text-left px-4 py-3 border-2 ${borderClass} ${bgClass} ${textClass} rounded-xl hover:scale-[1.01] transition-all cursor-pointer font-bold text-xs sm:text-sm tracking-wide max-w-xl w-full shadow-[0_2px_8px_rgba(226,85,48,0.1)] hover:shadow-[0_4px_16px_rgba(226,85,48,0.2)] flex items-center justify-between gap-4`}
+                            >
+                              <span className="truncate pr-2">{event[3] || 'Untitled Record'}</span>
+                              <span className={`text-[8px] tracking-widest font-mono uppercase px-1.5 py-0.5 rounded-md shrink-0 ${badgeClass}`}>
+                                {event[7]}
+                              </span>
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="px-6 py-4 border-t border-[#FF0500]/20 bg-black/60 flex items-center justify-between text-[10px] tracking-widest font-mono uppercase text-[#FFB451]/50">
+                <span>Terminal Mode Online</span>
+                <button
+                  type="button"
+                  onClick={() => setShowMajorTimeline(false)}
+                  className="px-4 py-1.5 bg-[#FF0500]/10 border border-[#FF0500] hover:bg-[#FF0500] hover:text-white transition-colors text-white font-bold text-[10px] uppercase tracking-wider rounded-lg cursor-pointer animate-none"
+                >
+                  Close Timeline
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* SINGLE EVENT DETAILS POPUP FROM TIMELINE */}
+      <AnimatePresence>
+        {selectedTimelineEvent && (
+          <SingleTimelineEventDetailModal 
+            event={selectedTimelineEvent}
+            onClose={() => setSelectedTimelineEvent(null)}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* PDF EXPORT LOGO LOADING OVERLAY */}
+      <AnimatePresence>
+        {pdfExporting && (
+          <div className="fixed inset-0 z-[150] flex flex-col items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-black/90 backdrop-blur-md"
+            />
+
+            <motion.div 
+              initial={{ scale: 0.92, opacity: 0, y: 30 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.92, opacity: 0, y: 30 }}
+              transition={{ type: "spring", damping: 25, stiffness: 220 }}
+              className="relative text-center space-y-6 z-10 p-8 max-w-sm bg-[#0c0c0c] border border-agt-orange/30 rounded-2xl flex flex-col items-center justify-center shadow-[0_0_50px_rgba(255,180,81,0.2)]"
+            >
+              <img 
+                src="/AGTicon.png" 
+                alt="AGT Icon Loading" 
+                className="w-16 h-16 object-contain animate-spin-y" 
+                referrerPolicy="no-referrer"
+              />
+              <div className="space-y-2">
+                <h3 className="text-lg font-bold tracking-widest text-[#FFB451] uppercase">
+                  Archival Synthesis
+                </h3>
+                <p className="text-[10px] tracking-widest font-mono uppercase text-[#E25530]/80">
+                  Exporting Chronology Timeline...
+                </p>
+                <p className="text-[9px] font-mono text-gray-500 uppercase">
+                  Please hold, finalizing historical documents
+                </p>
+              </div>
             </motion.div>
           </div>
         )}

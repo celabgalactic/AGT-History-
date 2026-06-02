@@ -54,3 +54,16 @@
 body {
   @apply antialiased bg-[#0a0a0a] text-agt-orange;
 }
+
+@keyframes spin-y {
+  from {
+    transform: rotateY(0deg);
+  }
+  to {
+    transform: rotateY(360deg);
+  }
+}
+
+.animate-spin-y {
+  animation: spin-y 1.5s linear infinite;
+}

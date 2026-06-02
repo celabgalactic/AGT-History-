@@ -1,6 +1,6 @@
 {
-  "name": "AGT History V0.01",
-  "description": "Generate History of the AGT Based on the Google sheet record",
+  "name": "AGT History Lore Terminal",
+  "description": "History and Lore records of the Alliance of Galactic Travellers",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
