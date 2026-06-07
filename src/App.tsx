@@ -757,11 +757,28 @@ export default function App() {
   const [rawEndDate, setRawEndDate] = useState('');
   const [significanceFilter, setSignificanceFilter] = useState('ALL');
   const [significanceMatchType, setSignificanceMatchType] = useState<'exact' | 'threshold'>('threshold');
-  const [activityFilter, setActivityFilter] = useState('ALL');
+  const [selectedCategories, setSelectedCategories] = useState<string[] | null>(null);
+  const [travellerFilter, setTravellerFilter] = useState('');
   const [civFilter, setCivFilter] = useState('');
   const [showAutocomplete, setShowAutocomplete] = useState(false);
   const autocompleteRef = useRef<HTMLDivElement>(null);
+
+  // Location filters
+  const [filterByLocation, setFilterByLocation] = useState(false);
+  const [systemFilter, setSystemFilter] = useState('');
+  const [regionFilter, setRegionFilter] = useState('');
+  const [galaxyFilter, setGalaxyFilter] = useState('');
+  const [showSystemAutocomplete, setShowSystemAutocomplete] = useState(false);
+  const [showRegionAutocomplete, setShowRegionAutocomplete] = useState(false);
+  const [showGalaxyAutocomplete, setShowGalaxyAutocomplete] = useState(false);
+
+  const systemAutocompleteRef = useRef<HTMLDivElement>(null);
+  const regionAutocompleteRef = useRef<HTMLDivElement>(null);
+  const galaxyAutocompleteRef = useRef<HTMLDivElement>(null);
+
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const startDatePickerRef = useRef<HTMLInputElement>(null);
+  const endDatePickerRef = useRef<HTMLInputElement>(null);
 
   // Major Timeline state managers
   const [showMajorTimeline, setShowMajorTimeline] = useState(false);
@@ -888,7 +905,7 @@ export default function App() {
         complete: (results) => {
           if (results.data && results.data.length > 1) {
             // results.data[0] describes the column headers. We skip it, keeping actual events.
-            const recordRows = results.data.slice(1);
+            const recordRows = results.data.slice(1).filter(row => row && row[0] && row[0].trim() !== '');
             setData(recordRows);
           } else {
             setError('Decoder warning: the retrieved historical database is empty.');
@@ -988,6 +1005,42 @@ export default function App() {
     return Array.from(tagsSet).sort();
   }, [data]);
 
+  // Dynamically extract and catalog unique Systems (Column I - index 8)
+  const systemsList = useMemo(() => {
+    const valuesSet = new Set<string>();
+    data.forEach(row => {
+      if (row[6] && row[6].trim().toUpperCase() === 'Y') {
+        const val = String(row[8] || '').trim();
+        if (val) valuesSet.add(val);
+      }
+    });
+    return Array.from(valuesSet).sort();
+  }, [data]);
+
+  // Dynamically extract and catalog unique Regions (Column J - index 9)
+  const regionsList = useMemo(() => {
+    const valuesSet = new Set<string>();
+    data.forEach(row => {
+      if (row[6] && row[6].trim().toUpperCase() === 'Y') {
+        const val = String(row[9] || '').trim();
+        if (val) valuesSet.add(val);
+      }
+    });
+    return Array.from(valuesSet).sort();
+  }, [data]);
+
+  // Dynamically extract and catalog unique Galaxies (Column K - index 10)
+  const galaxiesList = useMemo(() => {
+    const valuesSet = new Set<string>();
+    data.forEach(row => {
+      if (row[6] && row[6].trim().toUpperCase() === 'Y') {
+        const val = String(row[10] || '').trim();
+        if (val) valuesSet.add(val);
+      }
+    });
+    return Array.from(valuesSet).sort();
+  }, [data]);
+
   // Compute matching suggestions for the autocomplete
   const civSuggestions = useMemo(() => {
     let query = civFilter.trim().toLowerCase();
@@ -1000,11 +1053,45 @@ export default function App() {
     );
   }, [civilizationTagsList, civFilter]);
 
+  const systemSuggestions = useMemo(() => {
+    const query = systemFilter.trim().toLowerCase();
+    if (!query) return [];
+    return systemsList.filter(val => 
+      val.toLowerCase().includes(query) && val.toLowerCase() !== query
+    );
+  }, [systemsList, systemFilter]);
+
+  const regionSuggestions = useMemo(() => {
+    const query = regionFilter.trim().toLowerCase();
+    if (!query) return [];
+    return regionsList.filter(val => 
+      val.toLowerCase().includes(query) && val.toLowerCase() !== query
+    );
+  }, [regionsList, regionFilter]);
+
+  const galaxySuggestions = useMemo(() => {
+    const query = galaxyFilter.trim().toLowerCase();
+    if (!query) return [];
+    return galaxiesList.filter(val => 
+      val.toLowerCase().includes(query) && val.toLowerCase() !== query
+    );
+  }, [galaxiesList, galaxyFilter]);
+
   // Close suggestion dropdown on click outside
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (autocompleteRef.current && !autocompleteRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      if (autocompleteRef.current && !autocompleteRef.current.contains(target)) {
         setShowAutocomplete(false);
+      }
+      if (systemAutocompleteRef.current && !systemAutocompleteRef.current.contains(target)) {
+        setShowSystemAutocomplete(false);
+      }
+      if (regionAutocompleteRef.current && !regionAutocompleteRef.current.contains(target)) {
+        setShowRegionAutocomplete(false);
+      }
+      if (galaxyAutocompleteRef.current && !galaxyAutocompleteRef.current.contains(target)) {
+        setShowGalaxyAutocomplete(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -1022,12 +1109,12 @@ export default function App() {
         return false;
       }
 
-      // 2. Category selection check
-      if (activityFilter !== 'ALL') {
-        const type = String(row[17] || '').trim().toLowerCase();
-        if (type !== activityFilter.toLowerCase()) {
-          return false;
-        }
+      // 2. Category selection checking
+      const type = String(row[17] || '').trim().toLowerCase();
+      const currentActiveCategories = selectedCategories === null ? eventTypeList : selectedCategories;
+      const lowerActiveCategories = currentActiveCategories.map(cat => cat.toLowerCase());
+      if (!lowerActiveCategories.includes(type)) {
+        return false;
       }
 
       // 3. Significance importance checking (equal or greater importance value, or exact match index)
@@ -1061,9 +1148,46 @@ export default function App() {
         }
       }
 
+      // 5. Named Traveller(s) checking
+      const queryTraveller = travellerFilter.trim().toLowerCase();
+      if (queryTraveller) {
+        const rowTravellerStr = String(row[5] || '').trim().toLowerCase();
+        const parts = rowTravellerStr.split(',').map(p => p.trim()).filter(Boolean);
+        if (parts.length > 0) {
+          const matches = parts.some(part => part.includes(queryTraveller));
+          if (!matches) {
+            return false;
+          }
+        } else {
+          return false;
+        }
+      }
+
+      // 6. Location checking if Filter By Location is enabled
+      if (filterByLocation) {
+        if (systemFilter.trim()) {
+          const rowSystem = String(row[8] || '').trim().toLowerCase();
+          if (!rowSystem.includes(systemFilter.trim().toLowerCase())) {
+            return false;
+          }
+        }
+        if (regionFilter.trim()) {
+          const rowRegion = String(row[9] || '').trim().toLowerCase();
+          if (!rowRegion.includes(regionFilter.trim().toLowerCase())) {
+            return false;
+          }
+        }
+        if (galaxyFilter.trim()) {
+          const rowGalaxy = String(row[10] || '').trim().toLowerCase();
+          if (!rowGalaxy.includes(galaxyFilter.trim().toLowerCase())) {
+            return false;
+          }
+        }
+      }
+
       return true;
     });
-  }, [data, startDate, endDate, activityFilter, significanceFilter, civFilter]);
+  }, [data, startDate, endDate, selectedCategories, significanceFilter, civFilter, travellerFilter, eventTypeList, filterByLocation, systemFilter, regionFilter, galaxyFilter]);
 
   // Sorted events chronologically (earliest to latest format)
   const sortedEvents = useMemo(() => {
@@ -1090,12 +1214,12 @@ export default function App() {
         return false;
       }
 
-      // 2. Category selection check
-      if (activityFilter !== 'ALL') {
-        const type = String(row[17] || '').trim().toLowerCase();
-        if (type !== activityFilter.toLowerCase()) {
-          return false;
-        }
+      // 2. Category selection checking
+      const type = String(row[17] || '').trim().toLowerCase();
+      const currentActiveCategories = selectedCategories === null ? eventTypeList : selectedCategories;
+      const lowerActiveCategories = currentActiveCategories.map(cat => cat.toLowerCase());
+      if (!lowerActiveCategories.includes(type)) {
+        return false;
       }
 
       // 3. Ignore the Event significance criteria, but only show ERA, EPIC, and Major
@@ -1116,6 +1240,43 @@ export default function App() {
         }
       }
 
+      // 5. Named Traveller(s) checking
+      const queryTraveller = travellerFilter.trim().toLowerCase();
+      if (queryTraveller) {
+        const rowTravellerStr = String(row[5] || '').trim().toLowerCase();
+        const parts = rowTravellerStr.split(',').map(p => p.trim()).filter(Boolean);
+        if (parts.length > 0) {
+          const matches = parts.some(part => part.includes(queryTraveller));
+          if (!matches) {
+            return false;
+          }
+        } else {
+          return false;
+        }
+      }
+
+      // 6. Location checking if Filter By Location is enabled
+      if (filterByLocation) {
+        if (systemFilter.trim()) {
+          const rowSystem = String(row[8] || '').trim().toLowerCase();
+          if (!rowSystem.includes(systemFilter.trim().toLowerCase())) {
+            return false;
+          }
+        }
+        if (regionFilter.trim()) {
+          const rowRegion = String(row[9] || '').trim().toLowerCase();
+          if (!rowRegion.includes(regionFilter.trim().toLowerCase())) {
+            return false;
+          }
+        }
+        if (galaxyFilter.trim()) {
+          const rowGalaxy = String(row[10] || '').trim().toLowerCase();
+          if (!rowGalaxy.includes(galaxyFilter.trim().toLowerCase())) {
+            return false;
+          }
+        }
+      }
+
       return true;
     });
 
@@ -1129,7 +1290,7 @@ export default function App() {
       return dateA.getTime() - dateB.getTime();
     });
     return sorted;
-  }, [data, startDate, endDate, activityFilter, civFilter]);
+  }, [data, startDate, endDate, selectedCategories, civFilter, travellerFilter, eventTypeList, filterByLocation, systemFilter, regionFilter, galaxyFilter]);
 
   // Format a Date into DD-MMM-YYYY format
   const formatDdMmmYyyy = (date: Date): string => {
@@ -1191,7 +1352,14 @@ export default function App() {
       if (civDisplayVal.trim().toLowerCase() === 'agt') {
         civDisplayVal = "Alliance of Galactic Travellers";
       }
-      const catDisplay = activityFilter && activityFilter.trim() !== '' && activityFilter.toLowerCase() !== 'all' ? activityFilter : "All";
+      let catDisplay = "All";
+      if (selectedCategories !== null && selectedCategories.length !== eventTypeList.length) {
+        if (selectedCategories.length === 0) {
+          catDisplay = "None";
+        } else {
+          catDisplay = selectedCategories.join(', ');
+        }
+      }
       const dateOfReportStr = formatDdMmmYyyy(now);
 
       // COVER PAGE
@@ -1226,6 +1394,22 @@ export default function App() {
       doc.text(`Civilization: ${civDisplayVal}`, 105, startY, { align: "center" });
       startY += lineSpacing;
       doc.text(`Category Filter: ${catDisplay}`, 105, startY, { align: "center" });
+      
+      if (filterByLocation) {
+        if (systemFilter.trim()) {
+          startY += lineSpacing;
+          doc.text(`System Filter: ${systemFilter.trim()}`, 105, startY, { align: "center" });
+        }
+        if (regionFilter.trim()) {
+          startY += lineSpacing;
+          doc.text(`Region Filter: ${regionFilter.trim()}`, 105, startY, { align: "center" });
+        }
+        if (galaxyFilter.trim()) {
+          startY += lineSpacing;
+          doc.text(`Galaxy Filter: ${galaxyFilter.trim()}`, 105, startY, { align: "center" });
+        }
+      }
+
       startY += lineSpacing;
       doc.text(`Date of Report: ${dateOfReportStr}`, 105, startY, { align: "center" });
 
@@ -1639,20 +1823,43 @@ export default function App() {
                     <span className="text-emerald-500 text-[9px] lowercase font-mono">(valid date locked)</span>
                   )}
                 </label>
-                <input
-                  type="text"
-                  placeholder="DD/MM/YYYY"
-                  maxLength={10}
-                  value={rawStartDate}
-                  onChange={(e) => setRawStartDate(formatToDDMMYYYY(e.target.value, rawStartDate))}
-                  className={`w-full bg-[#1c1c1c] border focus:outline-none focus:ring-1 px-3.5 py-2.5 text-xs font-mono text-agt-orange rounded-xl ${
-                    rawStartDate && !isRawDateValid(rawStartDate)
-                      ? 'border-red-500 focus:border-red-500 focus:ring-red-500/30'
-                      : isRawDateComplete(rawStartDate) && isRawDateValid(rawStartDate)
-                      ? 'border-emerald-500/60 focus:border-emerald-500 focus:ring-emerald-500/30'
-                      : 'border-[#FF0500]/40 hover:border-red-400 focus:border-[#FF0500] focus:ring-[#FF0500]/30'
-                  }`}
-                />
+                <div className="relative">
+                  <input
+                    type="text"
+                    placeholder="DD/MM/YYYY"
+                    maxLength={10}
+                    value={rawStartDate}
+                    onChange={(e) => setRawStartDate(formatToDDMMYYYY(e.target.value, rawStartDate))}
+                    className={`w-full bg-[#1c1c1c] border focus:outline-none focus:ring-1 pl-3.5 pr-10 py-2.5 text-xs font-mono text-agt-orange rounded-xl ${
+                      rawStartDate && !isRawDateValid(rawStartDate)
+                        ? 'border-red-500 focus:border-red-500 focus:ring-red-500/30'
+                        : isRawDateComplete(rawStartDate) && isRawDateValid(rawStartDate)
+                        ? 'border-emerald-500/60 focus:border-emerald-500 focus:ring-emerald-500/30'
+                        : 'border-[#FF0500]/40 hover:border-red-400 focus:border-[#FF0500] focus:ring-[#FF0500]/30'
+                    }`}
+                  />
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center">
+                    <Calendar className="w-4 h-4 text-[#FF0500] pointer-events-none" />
+                    <input
+                      type="date"
+                      value={parseInputDateToIso(rawStartDate)}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val) {
+                          const parts = val.split('-');
+                          if (parts.length === 3) {
+                            setRawStartDate(`${parts[2]}/${parts[1]}/${parts[0]}`);
+                          }
+                        }
+                      }}
+                      className="absolute inset-0 opacity-0 cursor-pointer w-full h-full pointer-events-auto"
+                      title="Choose from calendar"
+                    />
+                  </div>
+                </div>
+                <span className="text-[9px] text-[#FFB451]/60 italic mt-0.5 ml-1">
+                  (Earliest date: 15-Apr-2017)
+                </span>
               </div>
 
               <div className="flex flex-col gap-2">
@@ -1668,43 +1875,49 @@ export default function App() {
                     <span className="text-emerald-500 text-[9px] lowercase font-mono">(valid date locked)</span>
                   )}
                 </label>
-                <input
-                  type="text"
-                  placeholder="DD/MM/YYYY"
-                  maxLength={10}
-                  value={rawEndDate}
-                  onChange={(e) => setRawEndDate(formatToDDMMYYYY(e.target.value, rawEndDate))}
-                  className={`w-full bg-[#1c1c1c] border focus:outline-none focus:ring-1 px-3.5 py-2.5 text-xs font-mono text-agt-orange rounded-xl ${
-                    rawEndDate && !isRawDateValid(rawEndDate)
-                      ? 'border-red-500 focus:border-red-500 focus:ring-red-500/30'
-                      : isRawDateComplete(rawEndDate) && isRawDateValid(rawEndDate)
-                      ? 'border-emerald-500/60 focus:border-emerald-500 focus:ring-emerald-500/30'
-                      : 'border-[#FF0500]/40 hover:border-red-400 focus:border-[#FF0500] focus:ring-[#FF0500]/30'
-                  }`}
-                />
-              </div>
-
-              {/* Event Category Selector */}
-              <div className="flex flex-col gap-2">
-                <label className="text-[10px] uppercase tracking-wider text-agt-orange/60 font-bold">
-                  Event Category
-                </label>
-                <select
-                  value={activityFilter}
-                  onChange={(e) => setActivityFilter(e.target.value)}
-                  className="w-full bg-[#1c1c1c] border border-[#FF0500]/40 hover:border-red-400 focus:border-[#FF0500] focus:outline-none focus:ring-1 focus:ring-[#FF0500] px-3.5 py-2.5 text-xs font-sans text-agt-orange rounded-xl cursor-pointer"
-                >
-                  <option value="ALL">ALL (Categories)</option>
-                  {eventTypeList.map((type, idx) => (
-                    <option key={idx} value={type}>{type}</option>
-                  ))}
-                </select>
+                <div className="relative">
+                  <input
+                    type="text"
+                    placeholder="DD/MM/YYYY"
+                    maxLength={10}
+                    value={rawEndDate}
+                    onChange={(e) => setRawEndDate(formatToDDMMYYYY(e.target.value, rawEndDate))}
+                    className={`w-full bg-[#1c1c1c] border focus:outline-none focus:ring-1 pl-3.5 pr-10 py-2.5 text-xs font-mono text-agt-orange rounded-xl ${
+                      rawEndDate && !isRawDateValid(rawEndDate)
+                        ? 'border-red-500 focus:border-red-500 focus:ring-red-500/30'
+                        : isRawDateComplete(rawEndDate) && isRawDateValid(rawEndDate)
+                        ? 'border-emerald-500/60 focus:border-emerald-500 focus:ring-emerald-500/30'
+                        : 'border-[#FF0500]/40 hover:border-red-400 focus:border-[#FF0500] focus:ring-[#FF0500]/30'
+                    }`}
+                  />
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center">
+                    <Calendar className="w-4 h-4 text-[#FF0500] pointer-events-none" />
+                    <input
+                      type="date"
+                      value={parseInputDateToIso(rawEndDate)}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val) {
+                          const parts = val.split('-');
+                          if (parts.length === 3) {
+                            setRawEndDate(`${parts[2]}/${parts[1]}/${parts[0]}`);
+                          }
+                        }
+                      }}
+                      className="absolute inset-0 opacity-0 cursor-pointer w-full h-full pointer-events-auto"
+                      title="Choose from calendar"
+                    />
+                  </div>
+                </div>
+                <span className="text-[9px] text-[#FFB451]/60 italic mt-0.5 ml-1">
+                  (Latest date: today)
+                </span>
               </div>
 
               {/* Event Significance Selector with Match Type toggle */}
               <div className="flex flex-col gap-2">
                 <div className="flex items-center justify-between">
-                  <label className="text-[10px] uppercase tracking-wider text-agt-orange/60 font-bold">
+                  <label className="text-[10px] uppercase tracking-wider text-agt-orange/60 font-bold font-sans">
                     Event Significance
                   </label>
                   
@@ -1768,8 +1981,8 @@ export default function App() {
               </div>
 
               {/* Civilization Autocomplete Filter */}
-              <div ref={autocompleteRef} className="flex flex-col gap-2 md:col-span-2 relative">
-                <label className="text-[10px] uppercase tracking-wider text-agt-orange/60 font-bold flex items-center gap-1.5">
+              <div ref={autocompleteRef} className="flex flex-col gap-2 relative">
+                <label className="text-[10px] uppercase tracking-wider text-agt-orange/60 font-bold flex items-center gap-1.5 font-sans">
                   <Search className="w-3.5 h-3.5 text-red-500" />
                   Civilization Filter
                 </label>
@@ -1825,31 +2038,314 @@ export default function App() {
                   )}
                 </AnimatePresence>
               </div>
+
+              {/* Named Traveller(s) Filter */}
+              <div className="flex flex-col gap-2 relative">
+                <label className="text-[10px] uppercase tracking-wider text-agt-orange/60 font-bold flex items-center gap-1.5 font-sans">
+                  <Search className="w-3.5 h-3.5 text-red-500" />
+                  Named Traveller(s)
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    placeholder="Enter traveller name(s) (e.g. Celab)"
+                    value={travellerFilter}
+                    onChange={(e) => setTravellerFilter(e.target.value)}
+                    className="w-full bg-[#1c1c1c] border border-[#FF0500]/40 hover:border-red-400 focus:border-[#FF0500] focus:outline-none focus:ring-1 focus:ring-[#FF0500] pl-3.5 pr-10 py-2.5 text-xs font-mono text-agt-orange rounded-xl placeholder:text-agt-orange/30"
+                  />
+                  {travellerFilter && (
+                    <button
+                      type="button"
+                      onClick={() => setTravellerFilter('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-red-500 hover:text-white rounded-md bg-transparent cursor-pointer"
+                      title="Clear text"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Record Category Selector */}
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] uppercase tracking-wider text-agt-orange/60 font-bold font-sans">
+                    Record Category
+                  </label>
+                  <div className="flex items-center gap-1.5 text-[8.5px] uppercase tracking-wider font-mono">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedCategories(null)}
+                      className="px-1.5 py-0.5 rounded border border-[#FF0500]/20 bg-red-950/20 text-[#FFB451] hover:text-white hover:bg-[#FF0500]/20 transition-colors cursor-pointer"
+                    >
+                      All
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedCategories([])}
+                      className="px-1.5 py-0.5 rounded border border-[#FF0500]/20 bg-red-950/20 text-[#FFB451]/60 hover:text-white hover:bg-[#FF0500]/20 transition-colors cursor-pointer"
+                    >
+                      None
+                    </button>
+                  </div>
+                </div>
+                <div className="bg-[#1c1c1c] border border-[#FF0500]/40 rounded-xl p-3 h-[125px] overflow-y-auto space-y-2 custom-scrollbar shadow-inner">
+                  {eventTypeList.map((type, idx) => {
+                    const isSelected = selectedCategories === null 
+                      ? true 
+                      : selectedCategories.includes(type);
+                    return (
+                      <label 
+                        key={idx} 
+                        className="flex items-center gap-2.5 text-xs text-agt-orange/90 hover:text-white cursor-pointer select-none font-sans transition-colors"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => {
+                            const currentList = selectedCategories === null ? [...eventTypeList] : [...selectedCategories];
+                            if (isSelected) {
+                              const newList = currentList.filter(c => c !== type);
+                              setSelectedCategories(newList);
+                            } else {
+                              const newList = [...currentList, type];
+                              if (newList.length === eventTypeList.length) {
+                                setSelectedCategories(null);
+                              } else {
+                                setSelectedCategories(newList);
+                              }
+                            }
+                          }}
+                          className="w-3.5 h-3.5 accent-[#FF0500] cursor-pointer bg-black/40 border border-[#FF0500]/40 rounded text-red-500 focus:ring-0 focus:ring-offset-0"
+                        />
+                        <span className="truncate">{type}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Filter by Location checkbox toggle */}
+              <div className="md:col-span-2 border-t border-[#FF0500]/20 pt-4 flex flex-col gap-4">
+                <label className="flex items-center gap-3 text-xs text-agt-orange hover:text-white cursor-pointer select-none font-bold uppercase tracking-wider font-sans">
+                  <input
+                    type="checkbox"
+                    checked={filterByLocation}
+                    onChange={(e) => setFilterByLocation(e.target.checked)}
+                    className="w-4 h-4 accent-[#FF0500] cursor-pointer bg-black/40 border border-[#FF0500]/40 rounded text-red-500 focus:ring-0 focus:ring-offset-0"
+                  />
+                  <span>Filter by Location</span>
+                </label>
+              </div>
+
+              {/* Dynamic Location Filters conditional on checked state */}
+              {filterByLocation && (
+                <>
+                  {/* System Grid Item */}
+                  <div ref={systemAutocompleteRef} className="flex flex-col gap-2 relative">
+                    <label className="text-[10px] uppercase tracking-wider text-agt-orange/60 font-bold flex items-center gap-1.5 font-sans">
+                      <MapPin className="w-3.5 h-3.5 text-red-500" />
+                      System Filter
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        placeholder="Search system name..."
+                        value={systemFilter}
+                        onChange={(e) => {
+                          setSystemFilter(e.target.value);
+                          setShowSystemAutocomplete(true);
+                        }}
+                        onFocus={() => setShowSystemAutocomplete(true)}
+                        className="w-full bg-[#1c1c1c] border border-[#FF0500]/40 hover:border-red-400 focus:border-[#FF0500] focus:outline-none focus:ring-1 focus:ring-[#FF0500] pl-3.5 pr-10 py-2.5 text-xs font-mono text-agt-orange rounded-xl placeholder:text-agt-orange/30"
+                      />
+                      {systemFilter && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSystemFilter('');
+                            setShowSystemAutocomplete(false);
+                          }}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-red-500 hover:text-white rounded-md bg-transparent cursor-pointer"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                    {/* Predictive text suggestions drop-down */}
+                    <AnimatePresence>
+                      {showSystemAutocomplete && systemSuggestions.length > 0 && (
+                        <motion.div
+                          initial={{ opacity: 0, y: -5 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -5 }}
+                          className="absolute left-0 right-0 top-full mt-1 bg-[#161616] border-2 border-[#FF0500] rounded-xl overflow-hidden shadow-2xl z-[90] max-h-48 overflow-y-auto custom-scrollbar"
+                        >
+                          {systemSuggestions.map((tag, idx) => (
+                            <button
+                              key={idx}
+                              type="button"
+                              onClick={() => {
+                                setSystemFilter(tag);
+                                setShowSystemAutocomplete(false);
+                              }}
+                              className="w-full text-left px-4 py-2.5 hover:bg-[#FF0500]/20 text-[#FFB451] text-xs font-mono border-b border-[#FF0500]/10 last:border-0 transition-colors cursor-pointer"
+                            >
+                              {tag}
+                            </button>
+                          ))}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+
+                  {/* Region Grid Item */}
+                  <div ref={regionAutocompleteRef} className="flex flex-col gap-2 relative">
+                    <label className="text-[10px] uppercase tracking-wider text-agt-orange/60 font-bold flex items-center gap-1.5 font-sans">
+                      <MapPin className="w-3.5 h-3.5 text-red-500" />
+                      Region Filter
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        placeholder="Search region name..."
+                        value={regionFilter}
+                        onChange={(e) => {
+                          setRegionFilter(e.target.value);
+                          setShowRegionAutocomplete(true);
+                        }}
+                        onFocus={() => setShowRegionAutocomplete(true)}
+                        className="w-full bg-[#1c1c1c] border border-[#FF0500]/40 hover:border-red-400 focus:border-[#FF0500] focus:outline-none focus:ring-1 focus:ring-[#FF0500] pl-3.5 pr-10 py-2.5 text-xs font-mono text-agt-orange rounded-xl placeholder:text-agt-orange/30"
+                      />
+                      {regionFilter && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRegionFilter('');
+                            setShowRegionAutocomplete(false);
+                          }}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-red-500 hover:text-white rounded-md bg-transparent cursor-pointer"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                    {/* Predictive text suggestions drop-down */}
+                    <AnimatePresence>
+                      {showRegionAutocomplete && regionSuggestions.length > 0 && (
+                        <motion.div
+                          initial={{ opacity: 0, y: -5 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -5 }}
+                          className="absolute left-0 right-0 top-full mt-1 bg-[#161616] border-2 border-[#FF0500] rounded-xl overflow-hidden shadow-2xl z-[90] max-h-48 overflow-y-auto custom-scrollbar"
+                        >
+                          {regionSuggestions.map((tag, idx) => (
+                            <button
+                              key={idx}
+                              type="button"
+                              onClick={() => {
+                                setRegionFilter(tag);
+                                setShowRegionAutocomplete(false);
+                              }}
+                              className="w-full text-left px-4 py-2.5 hover:bg-[#FF0500]/20 text-[#FFB451] text-xs font-mono border-b border-[#FF0500]/10 last:border-0 transition-colors cursor-pointer"
+                            >
+                              {tag}
+                            </button>
+                          ))}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+
+                  {/* Galaxy Grid Item */}
+                  <div ref={galaxyAutocompleteRef} className="flex flex-col gap-2 relative md:col-span-2">
+                    <label className="text-[10px] uppercase tracking-wider text-agt-orange/60 font-bold flex items-center gap-1.5 font-sans">
+                      <MapPin className="w-3.5 h-3.5 text-red-500" />
+                      Galaxy Filter
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        placeholder="Search galaxy name..."
+                        value={galaxyFilter}
+                        onChange={(e) => {
+                          setGalaxyFilter(e.target.value);
+                          setShowGalaxyAutocomplete(true);
+                        }}
+                        onFocus={() => setShowGalaxyAutocomplete(true)}
+                        className="w-full bg-[#1c1c1c] border border-[#FF0500]/40 hover:border-red-400 focus:border-[#FF0500] focus:outline-none focus:ring-1 focus:ring-[#FF0500] pl-3.5 pr-10 py-2.5 text-xs font-mono text-agt-orange rounded-xl placeholder:text-agt-orange/30"
+                      />
+                      {galaxyFilter && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setGalaxyFilter('');
+                            setShowGalaxyAutocomplete(false);
+                          }}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-red-500 hover:text-white rounded-md bg-transparent cursor-pointer"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                    {/* Predictive text suggestions drop-down */}
+                    <AnimatePresence>
+                      {showGalaxyAutocomplete && galaxySuggestions.length > 0 && (
+                        <motion.div
+                          initial={{ opacity: 0, y: -5 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -5 }}
+                          className="absolute left-0 right-0 top-full mt-1 bg-[#161616] border-2 border-[#FF0500] rounded-xl overflow-hidden shadow-2xl z-[90] max-h-48 overflow-y-auto custom-scrollbar"
+                        >
+                          {galaxySuggestions.map((tag, idx) => (
+                            <button
+                              key={idx}
+                              type="button"
+                              onClick={() => {
+                                setGalaxyFilter(tag);
+                                setShowGalaxyAutocomplete(false);
+                              }}
+                              className="w-full text-left px-4 py-2.5 hover:bg-[#FF0500]/20 text-[#FFB451] text-xs font-mono border-b border-[#FF0500]/10 last:border-0 transition-colors cursor-pointer"
+                            >
+                              {tag}
+                            </button>
+                          ))}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                </>
+              )}
             </div>
 
             {/* Diagnostics Stats and Clear option */}
-            <div className="pt-2 flex flex-wrap items-center justify-between gap-4 text-[10px] uppercase tracking-widest text-agt-orange/50">
+            <div className="pt-2 flex flex-wrap items-center justify-between gap-4 text-[10px] uppercase tracking-widest text-[#FF0500]/70">
               <div className="flex items-center gap-2">
-                <span>Historical Records Available:</span>
+                <span className="text-agt-orange/50">Historical Records Available:</span>
                 <span className="font-mono text-white bg-red-950/40 border border-[#FF0500]/20 px-2 py-0.5 rounded font-bold">
                   {loading ? '...' : sortedEvents.length}
                 </span>
               </div>
               
               {/* Reset filter helpers */}
-              {(rawStartDate || rawEndDate || activityFilter !== 'ALL' || significanceFilter !== 'ALL' || civFilter) && (
+              {(rawStartDate || rawEndDate || (selectedCategories !== null && selectedCategories.length !== eventTypeList.length) || significanceFilter !== 'ALL' || civFilter || travellerFilter || filterByLocation || systemFilter || regionFilter || galaxyFilter) && (
                 <button
                   onClick={() => {
                     setStartDate('');
                     setEndDate('');
                     setRawStartDate('');
                     setRawEndDate('');
-                    setActivityFilter('ALL');
+                    setSelectedCategories(null);
                     setSignificanceFilter('ALL');
                     setSignificanceMatchType('threshold');
                     setCivFilter('');
+                    setTravellerFilter('');
+                    setFilterByLocation(false);
+                    setSystemFilter('');
+                    setRegionFilter('');
+                    setGalaxyFilter('');
                   }}
-                  className="px-4 py-1.5 bg-[#FF0500]/10 border border-[#FF0500] hover:bg-[#FF0500] hover:text-white transition-colors text-white font-bold text-[9px] uppercase tracking-wider rounded-lg cursor-pointer"
+                  className="px-4 py-1.5 bg-[#FF0500]/10 border border-[#FF0500] hover:bg-[#FF0500] hover:text-white transition-colors text-white font-bold text-[9px] uppercase tracking-wider rounded-lg cursor-pointer animate-fade-in"
                 >
                   Clear Scanner Filters
                 </button>
@@ -1982,7 +2478,7 @@ export default function App() {
                 {/* Font proportions scaling config */}
                 <div className="space-y-2">
                   <label className="text-xs uppercase tracking-widest font-black text-agt-orange/50 block">
-                    Desktop Frame Text Scale
+                    Desktop Text Scale
                   </label>
                   <p className="text-[10px] text-agt-orange/30 italic">Scaling factor of typography inside widescreen environments.</p>
                   <select
