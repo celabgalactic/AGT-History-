@@ -308,6 +308,30 @@ const getSignificanceStyle = (sig: string): string => {
   }
 };
 
+const getRowSecurityLevel = (row: any[]): number => {
+  const cellVal = String(row[37] || '').trim();
+  if (!cellVal) return 0;
+  const val = cellVal.toLowerCase();
+  if (val.includes('scc restricted') || val.includes('scc')) return 5;
+  if (val.includes('slt restricted') || val.includes('slt')) return 4;
+  if (val.includes('top secret') || val.includes('top')) return 3;
+  if (val.includes('restricted')) return 2;
+  if (val.includes('private')) return 1;
+  return 0; // Public = 0
+};
+
+const getSecurityLevelInfo = (levelNum: number) => {
+  const levels = [
+    { label: "Public Record", color: "rgb(42, 255, 0)", hex: "#2AFF00" },
+    { label: "Private Record", color: "rgb(0, 244, 255)", hex: "#00F4FF" },
+    { label: "Restricted Record", color: "rgb(241, 152, 226)", hex: "#F198E2" },
+    { label: "Top Secret", color: "rgb(253, 3, 3)", hex: "#FD0303" },
+    { label: "SLT Restricted", color: "rgb(255, 147, 0)", hex: "#FF9300" },
+    { label: "SCC Restricted", color: "rgb(50, 135, 240)", hex: "#3287F0" }
+  ];
+  return levels[levelNum] || levels[0];
+};
+
 const SingleTimelineEventDetailModal = ({
   event,
   onClose
@@ -490,6 +514,16 @@ const SingleTimelineEventDetailModal = ({
           <div className="flex items-center gap-1.5 font-mono">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
             Chronology Archive Node [Timeline Selection]
+          </div>
+          {/* Security Clearance Badge */}
+          <div 
+            style={{ 
+              color: getSecurityLevelInfo(getRowSecurityLevel(event)).color, 
+              borderColor: getSecurityLevelInfo(getRowSecurityLevel(event)).color 
+            }}
+            className="mr-12 px-2.5 py-1 rounded-lg border text-[10px] font-bold font-mono tracking-wider bg-black/40"
+          >
+            {getSecurityLevelInfo(getRowSecurityLevel(event)).label}
           </div>
         </div>
 
@@ -747,18 +781,6 @@ const decodeXOR = (encodedText: string): string => {
     decoded += String.fromCharCode(originalCharCode); 
   } 
   return decoded; 
-};
-
-const getRowSecurityLevel = (row: any[]): number => {
-  const cellVal = String(row[37] || '').trim();
-  if (!cellVal) return 0;
-  const val = cellVal.toLowerCase();
-  if (val.includes('scc restricted') || val.includes('scc')) return 5;
-  if (val.includes('slt restricted') || val.includes('slt')) return 4;
-  if (val.includes('top secret') || val.includes('top')) return 3;
-  if (val.includes('restricted')) return 2;
-  if (val.includes('private')) return 1;
-  return 0; // Public = 0
 };
 
 const SIGNIFICANCE_LEVELS = [
@@ -1489,120 +1511,8 @@ export default function App() {
     return events;
   }, [filteredRecords]);
 
-  // Major Timeline Events: filtered by dates, civilization, and category. Ignored significance criteria, but only allows ERA, EPIC, Major.
-  const timelineEvents = useMemo(() => {
-    // Only parse rows where Column G (index 6, Use of timeline) equals "Y"
-    const timelineRows = data.filter(row => row[6] && row[6].trim().toUpperCase() === 'Y');
-
-    const filtered = timelineRows.filter(row => {
-      // 0. Security clearance checking based on cookie registration
-      const maxAllowedSecurity = (savedTravellerName && savedTravellerId) ? savedSecurityLevel : 0;
-      const rowSec = getRowSecurityLevel(row);
-      if (rowSec > maxAllowedSecurity) {
-        return false;
-      }
-
-      // 0.5. Omit Public / Private check (only applicable if verified)
-      if (savedTravellerName && savedTravellerId) {
-        if (omitPublicRecords && rowSec === 0) {
-          return false;
-        }
-        if (omitPrivateRecords && rowSec > 0) {
-          return false;
-        }
-      }
-
-      // 1. Date Range checking
-      if (!checkEventDateMatches(row, startDate, endDate)) {
-        return false;
-      }
-
-      // 1.5. Search word matching
-      if (searchWord.trim()) {
-        const query = searchWord.toLowerCase().trim();
-        const matched = row.some(cell => cell != null && String(cell).toLowerCase().includes(query));
-        if (!matched) {
-          return false;
-        }
-      }
-
-      // 2. Category selection checking
-      const type = String(row[17] || '').trim().toLowerCase();
-      const currentActiveCategories = selectedCategories === null ? eventTypeList : selectedCategories;
-      const lowerActiveCategories = currentActiveCategories.map(cat => cat.toLowerCase());
-      if (!lowerActiveCategories.includes(type)) {
-        return false;
-      }
-
-      // 3. Ignore the Event significance criteria, but only show ERA, EPIC, and Major
-      const rowSig = String(row[7] || '').trim().toLowerCase();
-      if (!['era', 'epic', 'major'].includes(rowSig)) {
-        return false;
-      }
-
-      // 4. Civilization Tag checking
-      let queryCiv = civFilter.trim().toLowerCase();
-      if (queryCiv === 'agt') {
-        queryCiv = 'alliance of galactic travellers';
-      }
-      if (queryCiv && queryCiv !== 'all') {
-        const rowCivsStr = String(row[34] || '').trim().toLowerCase();
-        if (!rowCivsStr.includes(queryCiv)) {
-          return false;
-        }
-      }
-
-      // 5. Named Traveller(s) checking
-      const queryTraveller = travellerFilter.trim().toLowerCase();
-      if (queryTraveller) {
-        const rowTravellerStr = String(row[5] || '').trim().toLowerCase();
-        const parts = rowTravellerStr.split(',').map(p => p.trim()).filter(Boolean);
-        if (parts.length > 0) {
-          const matches = parts.some(part => part.includes(queryTraveller));
-          if (!matches) {
-            return false;
-          }
-        } else {
-          return false;
-        }
-      }
-
-      // 6. Location checking if Filter By Location is enabled
-      if (filterByLocation) {
-        if (systemFilter.trim()) {
-          const rowSystem = String(row[8] || '').trim().toLowerCase();
-          if (!rowSystem.includes(systemFilter.trim().toLowerCase())) {
-            return false;
-          }
-        }
-        if (regionFilter.trim()) {
-          const rowRegion = String(row[9] || '').trim().toLowerCase();
-          if (!rowRegion.includes(regionFilter.trim().toLowerCase())) {
-            return false;
-          }
-        }
-        if (galaxyFilter.trim()) {
-          const rowGalaxy = String(row[10] || '').trim().toLowerCase();
-          if (!rowGalaxy.includes(galaxyFilter.trim().toLowerCase())) {
-            return false;
-          }
-        }
-      }
-
-      return true;
-    });
-
-    const sorted = [...filtered];
-    sorted.sort((a, b) => {
-      const dateA = getEventStartDate(a);
-      const dateB = getEventStartDate(b);
-      if (!dateA && !dateB) return 0;
-      if (!dateA) return 1;
-      if (!dateB) return -1;
-      return dateA.getTime() - dateB.getTime();
-    });
-    return sorted;
-  }, [data, startDate, endDate, selectedCategories, civFilter, travellerFilter, eventTypeList, filterByLocation, systemFilter, regionFilter, galaxyFilter, savedTravellerName, savedTravellerId, savedSecurityLevel, searchWord, omitPublicRecords, omitPrivateRecords]);
+  // Major Timeline Events: uses all user-configured filters in sortedEvents
+  const timelineEvents = sortedEvents;
 
   // Format a Date into DD-MMM-YYYY format
   const formatDdMmmYyyy = (date: Date): string => {
@@ -2076,14 +1986,22 @@ export default function App() {
             {savedTravellerName && savedTravellerId ? (
               <div 
                 id="header-traveller-badge"
-                className="px-3 py-1 border border-green-500 rounded-lg text-xs font-bold text-green-500 font-mono tracking-wider"
+                style={{
+                  color: getSecurityLevelInfo(savedSecurityLevel).color,
+                  borderColor: getSecurityLevelInfo(savedSecurityLevel).color
+                }}
+                className="px-3 py-1 border rounded-lg text-xs font-bold font-mono tracking-wider"
               >
                 {savedTravellerName.substring(0, 15)}
               </div>
             ) : (
               <div 
                 id="header-traveller-badge"
-                className="px-3 py-1 border border-[#FF0500] rounded-lg text-xs font-bold text-[#FF0500] font-mono tracking-wider"
+                style={{
+                  color: getSecurityLevelInfo(0).color,
+                  borderColor: getSecurityLevelInfo(0).color
+                }}
+                className="px-3 py-1 border rounded-lg text-xs font-bold font-mono tracking-wider"
               >
                 Public User
               </div>
@@ -2958,7 +2876,15 @@ export default function App() {
                   {savedTravellerName && savedTravellerId && (
                     <div className="flex items-center justify-between text-[10px] font-mono pt-3 border-t border-[#FF0500]/25">
                       <span className="text-white">Verified User: <span className="text-white font-bold">{savedTravellerName}</span></span>
-                      <span className="text-green-400">Clearance: <span className="text-green-400 font-bold">{["Public (0)", "Private (1)", "Restricted (2)", "Top Secret (3)", "SLT Restricted (4)", "SCC Restricted (5)"][savedSecurityLevel] ?? `Level ${savedSecurityLevel}`}</span></span>
+                      <span>
+                        <span className="text-[#FFB451]/70">Clearance: </span>
+                        <span 
+                          style={{ color: getSecurityLevelInfo(savedSecurityLevel).color }}
+                          className="font-bold uppercase tracking-wider"
+                        >
+                          {getSecurityLevelInfo(savedSecurityLevel).label}
+                        </span>
+                      </span>
                     </div>
                   )}
                 </div>
@@ -3062,11 +2988,24 @@ export default function App() {
 
               {/* Popup Header and counter index indicators */}
               <div className="px-6 py-4 border-b border-agt-orange/15 bg-black/40 flex items-center justify-between text-[10px] tracking-widest font-mono uppercase text-[#FFB451]/50">
-                <div className="flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                  Chronology Archive Node
+                <div className="flex items-center gap-3">
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    Chronology Archive Node
+                  </span>
+                  {activeEvent && (
+                    <div 
+                      style={{ 
+                        color: getSecurityLevelInfo(getRowSecurityLevel(activeEvent)).color, 
+                        borderColor: getSecurityLevelInfo(getRowSecurityLevel(activeEvent)).color 
+                      }}
+                      className="px-2 py-0.5 rounded-lg border text-[10px] font-bold font-mono tracking-wider bg-black/40"
+                    >
+                      {getSecurityLevelInfo(getRowSecurityLevel(activeEvent)).label}
+                    </div>
+                  )}
                 </div>
-                <div>
+                <div className="mr-12">
                   Index {currentEventIndex + 1} of {sortedEvents.length}
                 </div>
               </div>
@@ -3359,7 +3298,7 @@ export default function App() {
                     Major Chronology Timeline
                   </h3>
                   <p className="text-[10px] tracking-widest font-mono uppercase text-[#FFB451]/50 mt-1">
-                    Showing Era, Epic & Major events matching criteria ({timelineEvents.length} records)
+                    Showing events matching filter criteria ({timelineEvents.length} records)
                   </p>
                 </div>
               </div>
@@ -3371,7 +3310,7 @@ export default function App() {
                     <Calendar className="w-12 h-12 text-[#FF0500]/40 animate-pulse" />
                     <h4 className="text-sm font-bold uppercase tracking-widest text-[#FFB451]">No Chronological Matches</h4>
                     <p className="text-xs text-agt-orange/50 max-w-sm">
-                      Adjust your start date, end date, civilization filter, or category filter to scan historical timeline records.
+                      Adjust your active search filters, date range, or significance levels to scan historical timeline records.
                     </p>
                   </div>
                 ) : (
