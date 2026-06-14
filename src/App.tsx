@@ -852,11 +852,25 @@ export default function App() {
       
       const normalized = secNameStr.toLowerCase().trim();
       let secLevelNum = 0;
-      if (normalized.includes('scc')) secLevelNum = 5;
-      else if (normalized.includes('slt')) secLevelNum = 4;
-      else if (normalized.includes('top')) secLevelNum = 3;
-      else if (normalized.includes('restricted')) secLevelNum = 2;
-      else if (normalized.includes('private')) secLevelNum = 1;
+      if (/^\d+$/.test(normalized)) {
+        secLevelNum = parseInt(normalized, 10);
+      } else if (normalized.includes('scc')) {
+        secLevelNum = 5;
+      } else if (normalized.includes('slt')) {
+        secLevelNum = 4;
+      } else if (normalized.includes('top')) {
+        secLevelNum = 3;
+      } else if (normalized.includes('restricted')) {
+        secLevelNum = 2;
+      } else if (normalized.includes('private')) {
+        secLevelNum = 1;
+      } else {
+        const numMatch = normalized.match(/\d+/);
+        if (numMatch) {
+          secLevelNum = parseInt(numMatch[0], 10);
+        }
+      }
+      secLevelNum = Math.min(Math.max(secLevelNum, 0), 5);
       
       // Save to cookies
       setCookie('agt_traveller_name', matchedRow[0]);
@@ -2058,6 +2072,22 @@ export default function App() {
                 {loading ? 'DOWNLOADING' : data.length > 0 ? 'ONLINE' : 'OFFLINE'}
               </span>
             </div>
+            
+            {savedTravellerName && savedTravellerId ? (
+              <div 
+                id="header-traveller-badge"
+                className="px-3 py-1 border border-green-500 rounded-lg text-xs font-bold text-green-500 font-mono tracking-wider"
+              >
+                {savedTravellerName.substring(0, 15)}
+              </div>
+            ) : (
+              <div 
+                id="header-traveller-badge"
+                className="px-3 py-1 border border-[#FF0500] rounded-lg text-xs font-bold text-[#FF0500] font-mono tracking-wider"
+              >
+                Public User
+              </div>
+            )}
             
             {/* Spinning Settings cog */}
             <button 
