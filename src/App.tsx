@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Search, 
@@ -710,8 +710,218 @@ const SingleTimelineEventDetailModal = ({
   );
 };
 
+// Helper functions for security, cookies, and decrypter
+const setCookie = (name: string, value: string, days = 365) => {
+  const d = new Date();
+  d.setTime(d.getTime() + (days * 24 * 60 * 60 * 1000));
+  const expires = "expires=" + d.toUTCString();
+  document.cookie = `${name}=${encodeURIComponent(value)};${expires};path=/;SameSite=Lax`;
+};
+
+const getCookie = (name: string): string => {
+  const cname = name + "=";
+  const decodedCookie = decodeURIComponent(document.cookie);
+  const ca = decodedCookie.split(';');
+  for (let i = 0; i < ca.length; i++) {
+    let c = ca[i];
+    while (c.charAt(0) === ' ') {
+      c = c.substring(1);
+    }
+    if (c.indexOf(cname) === 0) {
+      return c.substring(cname.length, c.length);
+    }
+  }
+  return "";
+};
+
+const deleteCookie = (name: string) => {
+  document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; SameSite=Lax`;
+};
+
+const decodeXOR = (encodedText: string): string => {
+  const key = 969; 
+  let decoded = ""; 
+  for (let i = 0; i < encodedText.length; i++) { 
+    let charCode = encodedText.charCodeAt(i); 
+    let originalCharCode = charCode ^ key; // XOR again to reverse
+    decoded += String.fromCharCode(originalCharCode); 
+  } 
+  return decoded; 
+};
+
+const getRowSecurityLevel = (row: any[]): number => {
+  const cellVal = String(row[37] || '').trim();
+  if (!cellVal) return 0;
+  const val = cellVal.toLowerCase();
+  if (val.includes('scc restricted') || val.includes('scc')) return 5;
+  if (val.includes('slt restricted') || val.includes('slt')) return 4;
+  if (val.includes('top secret') || val.includes('top')) return 3;
+  if (val.includes('restricted')) return 2;
+  if (val.includes('private')) return 1;
+  return 0; // Public = 0
+};
+
+const SIGNIFICANCE_LEVELS = [
+  { id: 'era', label: 'Era' },
+  { id: 'epic', label: 'Epic' },
+  { id: 'major', label: 'Major' },
+  { id: 'minor', label: 'Minor' },
+  { id: 'event detail', label: 'Event Detail' },
+  { id: 'low', label: 'Low' },
+  { id: 'insignificant', label: 'Insignificant' }
+];
+
+const normalizeRowSignificance = (sig: string): string => {
+  const s = String(sig || '').trim().toLowerCase();
+  if (s === 'detail event' || s === 'detail') return 'event detail';
+  if (s === 'trivial') return 'low';
+  return s;
+};
+
 export default function App() {
   const [showSettings, setShowSettings] = useState(false);
+  
+  // Security levels and registration
+  const [savedTravellerName, setSavedTravellerName] = useState(() => getCookie('agt_traveller_name'));
+  const [savedTravellerId, setSavedTravellerId] = useState(() => getCookie('agt_traveller_id'));
+  const [savedSecurityLevel, setSavedSecurityLevel] = useState<number>(() => {
+    const s = getCookie('agt_security_level');
+    return s ? parseInt(s, 10) : 0;
+  });
+
+  // Verification UI inputs inside settings
+  const [travellerNameInput, setTravellerNameInput] = useState(() => getCookie('agt_traveller_name'));
+  const [travellerIdInput, setTravellerIdInput] = useState(() => getCookie('agt_traveller_id'));
+  
+  const [verifyError, setVerifyError] = useState<React.ReactNode>('');
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [popupMessage, setPopupMessage] = useState('');
+  const [pdfBlockedMessage, setPdfBlockedMessage] = useState('');
+
+  const verifyCredentials = async (inputName: string, inputId: string) => {
+    setVerifyError('');
+    
+    if (!inputName.trim() || !inputId.trim()) {
+      setVerifyError('Please enter both Traveller Name and ID.');
+      return;
+    }
+    
+    // Alphanumeric format check for traveller ID format: ########-????-####
+    const idRegex = /^\d{8}-[A-Za-z0-9]{4}-\d{4}$/;
+    if (!idRegex.test(inputId.trim())) {
+      setVerifyError('Invalid AGT Traveller ID format. Must be like ########-????-####');
+      return;
+    }
+
+    try {
+      setIsVerifying(true);
+      const url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSOZq3Cl2e0aNqzXdLRe63HuM7PlqGH3HnS_-0x6P_CYnGDJlK5QvI-YjU0lNaOgLyp3uoktS4WIXyK/pub?gid=505079663&single=true&output=tsv";
+      const res = await fetch(url);
+      if (!res.ok) {
+        throw new Error("Network response was not OK");
+      }
+      const tsvText = await res.text();
+      // Parse TSV rows:
+      const rows = tsvText.split('\n').map(line => line.split('\t').map(cell => cell.trim()));
+      
+      let matchedRow: string[] | null = null;
+      for (const row of rows) {
+        if (row[0] && row[0].toLowerCase() === inputName.trim().toLowerCase()) {
+          matchedRow = row;
+          break;
+        }
+      }
+      
+      if (!matchedRow) {
+        handleVerificationFailure();
+        return;
+      }
+      
+      const encodedId = matchedRow[1] || '';
+      const decodedId = decodeXOR(encodedId);
+      
+      const nameMatches = matchedRow[0].toLowerCase() === inputName.trim().toLowerCase();
+      const idMatches = decodedId.trim().toLowerCase() === inputId.trim().toLowerCase();
+      
+      if (!nameMatches || !idMatches) {
+        handleVerificationFailure();
+        return;
+      }
+      
+      const secNameStr = matchedRow[2] || 'Public';
+      
+      const normalized = secNameStr.toLowerCase().trim();
+      let secLevelNum = 0;
+      if (normalized.includes('scc')) secLevelNum = 5;
+      else if (normalized.includes('slt')) secLevelNum = 4;
+      else if (normalized.includes('top')) secLevelNum = 3;
+      else if (normalized.includes('restricted')) secLevelNum = 2;
+      else if (normalized.includes('private')) secLevelNum = 1;
+      
+      // Save to cookies
+      setCookie('agt_traveller_name', matchedRow[0]);
+      setCookie('agt_traveller_id', decodedId.trim());
+      setCookie('agt_security_level', String(secLevelNum));
+      
+      const checkName = getCookie('agt_traveller_name');
+      const checkId = getCookie('agt_traveller_id');
+      const checkLevel = getCookie('agt_security_level');
+      
+      if (checkName === matchedRow[0] && checkId === decodedId.trim() && checkLevel === String(secLevelNum)) {
+        setSavedTravellerName(matchedRow[0]);
+        setSavedTravellerId(decodedId.trim());
+        setSavedSecurityLevel(secLevelNum);
+        
+        setPopupMessage("Verification successful, setting saved");
+      } else {
+        setPopupMessage("Verification successful, setting save error");
+      }
+      
+    } catch (err) {
+      console.error(err);
+      setPopupMessage("Verification unsuccessful");
+      setVerifyError("Network error contacting verification server.");
+    } finally {
+      setIsVerifying(false);
+    }
+  };
+
+  const handleVerificationFailure = () => {
+    setIsVerifying(false);
+    setPopupMessage("Verification unsuccessful");
+    setVerifyError(
+      <span>
+        Traveller Name and ID and does not match, Please consult{" "}
+        <a 
+          href="https://www.nms-agt.com/support/traveller-id" 
+          target="_blank" 
+          rel="noopener noreferrer"
+          className="text-[#FF0500] underline font-bold hover:text-[#ff3c39]"
+        >
+          AGT Support
+        </a>
+      </span>
+    );
+  };
+
+  const handleClearCredentials = () => {
+    deleteCookie('agt_traveller_name');
+    deleteCookie('agt_traveller_id');
+    deleteCookie('agt_security_level');
+
+    const checkName = getCookie('agt_traveller_name');
+    if (!checkName) {
+      setSavedTravellerName('');
+      setSavedTravellerId('');
+      setSavedSecurityLevel(0);
+      setTravellerNameInput('');
+      setTravellerIdInput('');
+      setVerifyError('');
+      setPopupMessage('Clearing successful');
+    } else {
+      setPopupMessage('Clearing failed');
+    }
+  };
   const [audioEnabled, setAudioEnabled] = useState<boolean>(() => {
     const saved = localStorage.getItem('agt_audio_enabled');
     return saved === null ? false : saved === 'true'; // Muted by default
@@ -755,8 +965,14 @@ export default function App() {
   const [endDate, setEndDate] = useState('');
   const [rawStartDate, setRawStartDate] = useState('');
   const [rawEndDate, setRawEndDate] = useState('');
-  const [significanceFilter, setSignificanceFilter] = useState('ALL');
-  const [significanceMatchType, setSignificanceMatchType] = useState<'exact' | 'threshold'>('threshold');
+  const [searchWord, setSearchWord] = useState('');
+  const [selectedSignificance, setSelectedSignificance] = useState<string[]>(() => [
+    'era',
+    'epic',
+    'major',
+    'minor',
+    'event detail'
+  ]);
   const [selectedCategories, setSelectedCategories] = useState<string[] | null>(null);
   const [travellerFilter, setTravellerFilter] = useState('');
   const [civFilter, setCivFilter] = useState('');
@@ -1104,9 +1320,25 @@ export default function App() {
     const timelineRows = data.filter(row => row[6] && row[6].trim().toUpperCase() === 'Y');
 
     return timelineRows.filter(row => {
+      // 0. Security clearance checking based on cookie registration
+      const maxAllowedSecurity = (savedTravellerName && savedTravellerId) ? savedSecurityLevel : 0;
+      const rowSec = getRowSecurityLevel(row);
+      if (rowSec > maxAllowedSecurity) {
+        return false;
+      }
+
       // 1. Date Range checking
       if (!checkEventDateMatches(row, startDate, endDate)) {
         return false;
+      }
+
+      // 1.5. Search word matching
+      if (searchWord.trim()) {
+        const query = searchWord.toLowerCase().trim();
+        const matched = row.some(cell => cell != null && String(cell).toLowerCase().includes(query));
+        if (!matched) {
+          return false;
+        }
       }
 
       // 2. Category selection checking
@@ -1117,23 +1349,10 @@ export default function App() {
         return false;
       }
 
-      // 3. Significance importance checking (equal or greater importance value, or exact match index)
-      if (significanceFilter !== 'ALL') {
-        const rowSig = String(row[7] || '').trim().toLowerCase();
-        const filterSig = significanceFilter.toLowerCase();
-        if (significanceMatchType === 'exact') {
-          const filterRank = SignificanceRanks[filterSig] ?? -1;
-          const currentRank = SignificanceRanks[rowSig] ?? -2;
-          if (filterRank !== currentRank) {
-            return false;
-          }
-        } else {
-          const filterRank = SignificanceRanks[filterSig] ?? 0;
-          const currentRank = SignificanceRanks[rowSig] ?? 0;
-          if (currentRank < filterRank) {
-            return false;
-          }
-        }
+      // 3. Significance level checkbox list checking
+      const rowSigNormalized = normalizeRowSignificance(row[7]);
+      if (!selectedSignificance.includes(rowSigNormalized)) {
+        return false;
       }
 
       // 4. Civilization Tag checking
@@ -1187,7 +1406,7 @@ export default function App() {
 
       return true;
     });
-  }, [data, startDate, endDate, selectedCategories, significanceFilter, civFilter, travellerFilter, eventTypeList, filterByLocation, systemFilter, regionFilter, galaxyFilter]);
+  }, [data, startDate, endDate, selectedCategories, selectedSignificance, civFilter, travellerFilter, eventTypeList, filterByLocation, systemFilter, regionFilter, galaxyFilter, savedTravellerName, savedTravellerId, savedSecurityLevel, searchWord]);
 
   // Sorted events chronologically (earliest to latest format)
   const sortedEvents = useMemo(() => {
@@ -1209,9 +1428,25 @@ export default function App() {
     const timelineRows = data.filter(row => row[6] && row[6].trim().toUpperCase() === 'Y');
 
     const filtered = timelineRows.filter(row => {
+      // 0. Security clearance checking based on cookie registration
+      const maxAllowedSecurity = (savedTravellerName && savedTravellerId) ? savedSecurityLevel : 0;
+      const rowSec = getRowSecurityLevel(row);
+      if (rowSec > maxAllowedSecurity) {
+        return false;
+      }
+
       // 1. Date Range checking
       if (!checkEventDateMatches(row, startDate, endDate)) {
         return false;
+      }
+
+      // 1.5. Search word matching
+      if (searchWord.trim()) {
+        const query = searchWord.toLowerCase().trim();
+        const matched = row.some(cell => cell != null && String(cell).toLowerCase().includes(query));
+        if (!matched) {
+          return false;
+        }
       }
 
       // 2. Category selection checking
@@ -1290,7 +1525,7 @@ export default function App() {
       return dateA.getTime() - dateB.getTime();
     });
     return sorted;
-  }, [data, startDate, endDate, selectedCategories, civFilter, travellerFilter, eventTypeList, filterByLocation, systemFilter, regionFilter, galaxyFilter]);
+  }, [data, startDate, endDate, selectedCategories, civFilter, travellerFilter, eventTypeList, filterByLocation, systemFilter, regionFilter, galaxyFilter, savedTravellerName, savedTravellerId, savedSecurityLevel, searchWord]);
 
   // Format a Date into DD-MMM-YYYY format
   const formatDdMmmYyyy = (date: Date): string => {
@@ -1315,6 +1550,14 @@ export default function App() {
   };
 
   const handleGeneratePDF = async () => {
+    const cookieName = getCookie('agt_traveller_name');
+    const cookieId = getCookie('agt_traveller_id');
+    
+    if (!cookieName || !cookieId) {
+      setPdfBlockedMessage("PDF Report is only available to registered AGT Travellers. Enter your credentials in the setting menu");
+      return;
+    }
+
     if (timelineEvents.length === 0) return;
     setPdfExporting(true);
 
@@ -1914,70 +2157,31 @@ export default function App() {
                 </span>
               </div>
 
-              {/* Event Significance Selector with Match Type toggle */}
-              <div className="flex flex-col gap-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-[10px] uppercase tracking-wider text-agt-orange/60 font-bold font-sans">
-                    Event Significance
-                  </label>
-                  
-                  {/* Matching mode toggle controller */}
-                  <div className="flex gap-1 bg-[#161616] p-0.5 border border-white/5 rounded-md text-[8px] uppercase tracking-wider font-mono">
+              {/* Search Word Input (spanning full width md:col-span-2) */}
+              <div className="flex flex-col gap-2 md:col-span-2">
+                <label className="text-[10px] uppercase tracking-wider text-agt-orange/60 font-bold flex items-center gap-1.5 font-sans">
+                  <Search className="w-3.5 h-3.5 text-red-500" />
+                  Search Word
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    placeholder="Search any fields containing this term..."
+                    value={searchWord}
+                    onChange={(e) => setSearchWord(e.target.value)}
+                    className="w-full bg-[#1c1c1c] border border-[#FF0500]/40 hover:border-red-400 focus:border-[#FF0500] focus:outline-none focus:ring-1 focus:ring-[#FF0500] pl-3.5 pr-10 py-2.5 text-xs font-mono text-agt-orange rounded-xl placeholder:text-agt-orange/30"
+                  />
+                  {searchWord && (
                     <button
                       type="button"
-                      onClick={() => setSignificanceMatchType('threshold')}
-                      className={`py-0.5 px-1.5 rounded transition-all font-bold ${
-                        significanceMatchType === 'threshold'
-                          ? 'bg-red-600 text-white'
-                          : 'text-agt-orange/40 hover:text-white'
-                      }`}
-                      title="Show selected significance and any more important/broader events"
+                      onClick={() => setSearchWord('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-red-500 hover:text-white rounded-md bg-transparent cursor-pointer"
+                      title="Clear search"
                     >
-                      Threshold &amp; Higher
+                      <X className="w-3.5 h-3.5" />
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => setSignificanceMatchType('exact')}
-                      className={`py-0.5 px-1.5 rounded transition-all font-bold ${
-                        significanceMatchType === 'exact'
-                          ? 'bg-red-600 text-white'
-                          : 'text-agt-orange/40 hover:text-white'
-                      }`}
-                      title="Show only records having exactly the selected significance"
-                    >
-                      Exact Match
-                    </button>
-                  </div>
-                </div>
-
-                <select
-                  value={significanceFilter}
-                  onChange={(e) => setSignificanceFilter(e.target.value)}
-                  className="w-full bg-[#1c1c1c] border border-[#FF0500]/40 hover:border-red-400 focus:border-[#FF0500] focus:outline-none focus:ring-1 focus:ring-[#FF0500] px-3.5 py-2.5 text-xs font-sans text-agt-orange rounded-xl cursor-pointer"
-                >
-                  <option value="ALL">ALL (Clearance level)</option>
-                  {significanceMatchType === 'exact' ? (
-                    <>
-                      <option value="Era">Era Epochs Only</option>
-                      <option value="Epic">Epic Events Only</option>
-                      <option value="Major">Major Events Only</option>
-                      <option value="Minor">Minor Events Only</option>
-                      <option value="Event Detail">Event Details Only</option>
-                      <option value="Low">Low Significance Only</option>
-                      <option value="Insignificant">Insignificant Only</option>
-                    </>
-                  ) : (
-                    <>
-                      <option value="Era">Era Epochs Only</option>
-                      <option value="Epic">Epic Events &amp; Higher</option>
-                      <option value="Major">Major Events &amp; Higher</option>
-                      <option value="Minor">Minor Events &amp; Higher</option>
-                      <option value="Event Detail">Event Details &amp; Higher</option>
-                      <option value="Low">Low Significance &amp; Higher</option>
-                      <option value="Insignificant">Insignificant &amp; Higher</option>
-                    </>
                   )}
-                </select>
+                </div>
               </div>
 
               {/* Civilization Autocomplete Filter */}
@@ -2063,6 +2267,56 @@ export default function App() {
                       <X className="w-3.5 h-3.5" />
                     </button>
                   )}
+                </div>
+              </div>
+
+              {/* Event Significance Selector (Checkboxes list) */}
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] uppercase tracking-wider text-agt-orange/60 font-bold font-sans">
+                    Event Significance
+                  </label>
+                  <div className="flex items-center gap-1.5 text-[8.5px] uppercase tracking-wider font-mono">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedSignificance(SIGNIFICANCE_LEVELS.map(l => l.id))}
+                      className="px-1.5 py-0.5 rounded border border-[#FF0500]/20 bg-red-950/20 text-[#FFB451] hover:text-white hover:bg-[#FF0500]/20 transition-colors cursor-pointer"
+                    >
+                      All
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedSignificance([])}
+                      className="px-1.5 py-0.5 rounded border border-[#FF0500]/20 bg-red-950/20 text-[#FFB451]/60 hover:text-white hover:bg-[#FF0500]/20 transition-colors cursor-pointer"
+                    >
+                      None
+                    </button>
+                  </div>
+                </div>
+                <div className="bg-[#1c1c1c] border border-[#FF0500]/40 rounded-xl p-3 h-[125px] overflow-y-auto space-y-2 custom-scrollbar shadow-inner">
+                  {SIGNIFICANCE_LEVELS.map((level, idx) => {
+                    const isSelected = selectedSignificance.includes(level.id);
+                    return (
+                      <label 
+                        key={idx} 
+                        className="flex items-center gap-2.5 text-xs text-agt-orange/90 hover:text-white cursor-pointer select-none font-sans transition-colors"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => {
+                            if (isSelected) {
+                              setSelectedSignificance(selectedSignificance.filter(s => s !== level.id));
+                            } else {
+                              setSelectedSignificance([...selectedSignificance, level.id]);
+                            }
+                          }}
+                          className="w-3.5 h-3.5 accent-[#FF0500] cursor-pointer bg-black/40 border border-[#FF0500]/40 rounded text-red-500 focus:ring-0 focus:ring-offset-0"
+                        />
+                        <span className="truncate">{level.label}</span>
+                      </label>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -2319,7 +2573,7 @@ export default function App() {
             </div>
 
             {/* Diagnostics Stats and Clear option */}
-            <div className="pt-2 flex flex-wrap items-center justify-between gap-4 text-[10px] uppercase tracking-widest text-[#FF0500]/70">
+            <div className="pt-2 flex flex-wrap items-center justify-between gap-4 text-[10px] uppercase tracking-widest text-[#FF0500]/70 border-t border-[#FF0500]/20 pt-4">
               <div className="flex items-center gap-2">
                 <span className="text-agt-orange/50">Historical Records Available:</span>
                 <span className="font-mono text-white bg-red-950/40 border border-[#FF0500]/20 px-2 py-0.5 rounded font-bold">
@@ -2327,29 +2581,28 @@ export default function App() {
                 </span>
               </div>
               
-              {/* Reset filter helpers */}
-              {(rawStartDate || rawEndDate || (selectedCategories !== null && selectedCategories.length !== eventTypeList.length) || significanceFilter !== 'ALL' || civFilter || travellerFilter || filterByLocation || systemFilter || regionFilter || galaxyFilter) && (
-                <button
-                  onClick={() => {
-                    setStartDate('');
-                    setEndDate('');
-                    setRawStartDate('');
-                    setRawEndDate('');
-                    setSelectedCategories(null);
-                    setSignificanceFilter('ALL');
-                    setSignificanceMatchType('threshold');
-                    setCivFilter('');
-                    setTravellerFilter('');
-                    setFilterByLocation(false);
-                    setSystemFilter('');
-                    setRegionFilter('');
-                    setGalaxyFilter('');
-                  }}
-                  className="px-4 py-1.5 bg-[#FF0500]/10 border border-[#FF0500] hover:bg-[#FF0500] hover:text-white transition-colors text-white font-bold text-[9px] uppercase tracking-wider rounded-lg cursor-pointer animate-fade-in"
-                >
-                  Clear Scanner Filters
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setStartDate('');
+                  setEndDate('');
+                  setRawStartDate('');
+                  setRawEndDate('');
+                  setSearchWord('');
+                  setSelectedCategories(null);
+                  setSelectedSignificance(['era', 'epic', 'major', 'minor', 'event detail']);
+                  setCivFilter('');
+                  setTravellerFilter('');
+                  setFilterByLocation(false);
+                  setSystemFilter('');
+                  setRegionFilter('');
+                  setGalaxyFilter('');
+                }}
+                className="px-4 py-1.5 bg-[#FF0500]/10 border border-[#FF0500]/50 hover:bg-[#FF0500] hover:text-white transition-colors text-white font-bold text-[9px] uppercase tracking-wider rounded-lg cursor-pointer flex items-center gap-1.5"
+              >
+                <X className="w-3 h-3 text-[#FF0500]" />
+                <span>Reset All Filters</span>
+              </button>
             </div>
 
             {/* Primary Action Buttons */}
@@ -2376,7 +2629,7 @@ export default function App() {
                 className="flex-1 py-4 bg-[#FF0500] text-white hover:bg-[#ff3330] disabled:opacity-30 disabled:pointer-events-none rounded-full font-black text-xs uppercase tracking-[0.2em] shadow-[0_4px_15px_rgba(255,5,0,0.3)] hover:shadow-[0_0_20px_rgba(255,5,0,0.5)] active:scale-[0.98] transition-all flex items-center justify-center gap-2 cursor-pointer"
               >
                 <Calendar className="w-4 h-4 text-white" />
-                <span>Major Timeline</span>
+                <span>Timeline</span>
               </button>
 
               <button
@@ -2492,6 +2745,88 @@ export default function App() {
                     <option value="2.5x">2.5x (Huge)</option>
                     <option value="3x">3.0x (Extreme)</option>
                   </select>
+                </div>
+
+                {/* Traveller Credentials Integration */}
+                <div className="pt-4 border-t border-[#FF0500]/25 space-y-4">
+                  <div>
+                    <h4 className="text-xs uppercase tracking-widest font-black text-agt-orange block mb-1">
+                      Traveller ID & Clearance
+                    </h4>
+                    <p className="text-[10px] text-agt-orange/30 italic">Verify your credentials and claim your security clearance level.</p>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold tracking-wider text-agt-orange/60 block">
+                        Traveller Name
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Alphanumeric, up to 42 characters"
+                        value={travellerNameInput}
+                        onChange={(e) => {
+                          const clean = e.target.value.replace(/[^a-zA-Z0-9\s]/g, '').slice(0, 42);
+                          setTravellerNameInput(clean);
+                        }}
+                        className="w-full bg-[#1c1c1c] border border-[#FF0500]/30 focus:outline-none focus:ring-1 focus:ring-[#FF0500] px-3.5 py-2 text-xs text-[#FFB451] rounded-xl font-mono placeholder-agt-orange/35"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold tracking-wider text-agt-orange/60 block">
+                        AGT Traveller ID
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Format: ########-????-####"
+                        value={travellerIdInput}
+                        onChange={(e) => {
+                          setTravellerIdInput(e.target.value.slice(0, 30));
+                        }}
+                        className="w-full bg-[#1c1c1c] border border-[#FF0500]/30 focus:outline-none focus:ring-1 focus:ring-[#FF0500] px-3.5 py-2 text-xs text-[#FFB451] rounded-xl font-mono placeholder-agt-orange/35"
+                      />
+                    </div>
+                  </div>
+
+                  {savedTravellerName && savedTravellerId ? (
+                    <div className="bg-[#FF0500]/10 border border-[#FF0500]/30 rounded-xl p-3 text-[10px] space-y-1">
+                      <div className="font-bold uppercase tracking-wider text-green-400">STATUS: VERIFIED</div>
+                      <div className="text-white/80 font-mono">Cleared Name: {savedTravellerName}</div>
+                      <div className="text-white/80 font-mono">
+                        Level: {["Public (0)", "Private (1)", "Restricted (2)", "Top Secret (3)", "SLT Restricted (4)", "SCC Restricted (5)"][savedSecurityLevel] ?? savedSecurityLevel}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="bg-black/30 border border-white/5 rounded-xl p-3 text-[10px]">
+                      <div className="font-bold uppercase tracking-wider text-yellow-500/80">STATUS: PUBLIC PREVIEW</div>
+                    </div>
+                  )}
+
+                  {verifyError && (
+                    <div className="text-[10px] bg-red-950/30 border border-[#FF0500]/25 rounded-xl p-3 leading-relaxed text-red-400">
+                      {verifyError}
+                    </div>
+                  )}
+
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => verifyCredentials(travellerNameInput, travellerIdInput)}
+                      disabled={isVerifying}
+                      className="flex-1 py-2.5 bg-[#FF0500] hover:bg-[#ff3330] disabled:opacity-50 text-white text-[10px] font-bold uppercase tracking-wider rounded-xl transition-all cursor-pointer text-center"
+                    >
+                      {isVerifying ? 'Verifying...' : 'Verify Clearance'}
+                    </button>
+                    
+                    <button
+                      type="button"
+                      onClick={handleClearCredentials}
+                      className="py-2.5 px-4 bg-black/40 border border-[#FF0500]/45 text-[#FF0500] hover:bg-[#FF0500] hover:text-white text-[10px] font-bold uppercase tracking-wider rounded-xl transition-all cursor-pointer text-center"
+                    >
+                      Reset
+                    </button>
+                  </div>
                 </div>
 
                 {/* Ambient music control loop */}
@@ -3059,6 +3394,72 @@ export default function App() {
                   Please hold, finalizing historical documents
                 </p>
               </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* General Security Verification and Clear Notifications */}
+      <AnimatePresence>
+        {popupMessage && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setPopupMessage('')}
+              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="relative max-w-sm w-full bg-[#161616] border-2 border-agt-orange rounded-2xl p-6 z-10 text-center shadow-[0_15px_60px_rgba(255,180,81,0.25)]"
+            >
+              <div className="flex justify-center mb-4">
+                <AlertCircle className={`w-10 h-10 ${popupMessage.toLowerCase().includes('successful') ? 'text-green-400' : 'text-[#FF0500]'}`} />
+              </div>
+              <h4 className="text-sm font-black uppercase tracking-widest text-[#FFB451] mb-2">Security Hub</h4>
+              <p className="text-xs text-white/90 mb-5 leading-relaxed font-semibold">{popupMessage}</p>
+              <button
+                onClick={() => setPopupMessage('')}
+                className="px-6 py-2 bg-agt-orange hover:bg-[#ffb451] text-black text-xs uppercase tracking-widest font-black rounded-lg transition-all cursor-pointer"
+              >
+                Continue
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* PDF Blocked / Access Restriction Notification */}
+      <AnimatePresence>
+        {pdfBlockedMessage && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setPdfBlockedMessage('')}
+              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="relative max-w-sm w-full bg-[#161616] border-2 border-[#FF0500] rounded-2xl p-6 z-10 text-center shadow-[0_15px_60px_rgba(255,5,0,0.35)]"
+            >
+              <div className="flex justify-center mb-4">
+                <AlertCircle className="w-10 h-10 text-[#FF0500] animate-bounce" />
+              </div>
+              <h4 className="text-sm font-black uppercase tracking-widest text-agt-orange mb-3">Access Denied</h4>
+              <p className="text-xs text-white/95 mb-5 leading-relaxed font-semibold">{pdfBlockedMessage}</p>
+              <button
+                onClick={() => setPdfBlockedMessage('')}
+                className="px-6 py-2 bg-[#FF0500] hover:bg-[#ff3330] text-white text-xs uppercase tracking-widest font-black rounded-lg transition-all cursor-pointer"
+              >
+                Dismiss
+              </button>
             </motion.div>
           </div>
         )}
