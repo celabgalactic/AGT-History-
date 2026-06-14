@@ -981,6 +981,8 @@ export default function App() {
 
   // Location filters
   const [filterByLocation, setFilterByLocation] = useState(false);
+  const [omitPublicRecords, setOmitPublicRecords] = useState(false);
+  const [omitPrivateRecords, setOmitPrivateRecords] = useState(false);
   const [systemFilter, setSystemFilter] = useState('');
   const [regionFilter, setRegionFilter] = useState('');
   const [galaxyFilter, setGalaxyFilter] = useState('');
@@ -1314,22 +1316,19 @@ export default function App() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Pre-compiled list of records adhering to active filters
-  const filteredRecords = useMemo(() => {
+  // Pre-compiled list of records adhering to active filters and classified omitted count
+  const { filteredRecords, classifiedOmittedCount } = useMemo(() => {
     // Only parse rows where Column G (index 6, Use of timeline) equals "Y"
     const timelineRows = data.filter(row => row[6] && row[6].trim().toUpperCase() === 'Y');
+    const maxAllowedSecurity = (savedTravellerName && savedTravellerId) ? savedSecurityLevel : 0;
 
-    return timelineRows.filter(row => {
-      // 0. Security clearance checking based on cookie registration
-      const maxAllowedSecurity = (savedTravellerName && savedTravellerId) ? savedSecurityLevel : 0;
-      const rowSec = getRowSecurityLevel(row);
-      if (rowSec > maxAllowedSecurity) {
-        return false;
-      }
+    let omittedCount = 0;
+    const filtered = [];
 
+    for (const row of timelineRows) {
       // 1. Date Range checking
       if (!checkEventDateMatches(row, startDate, endDate)) {
-        return false;
+        continue;
       }
 
       // 1.5. Search word matching
@@ -1337,7 +1336,7 @@ export default function App() {
         const query = searchWord.toLowerCase().trim();
         const matched = row.some(cell => cell != null && String(cell).toLowerCase().includes(query));
         if (!matched) {
-          return false;
+          continue;
         }
       }
 
@@ -1346,13 +1345,13 @@ export default function App() {
       const currentActiveCategories = selectedCategories === null ? eventTypeList : selectedCategories;
       const lowerActiveCategories = currentActiveCategories.map(cat => cat.toLowerCase());
       if (!lowerActiveCategories.includes(type)) {
-        return false;
+        continue;
       }
 
       // 3. Significance level checkbox list checking
       const rowSigNormalized = normalizeRowSignificance(row[7]);
       if (!selectedSignificance.includes(rowSigNormalized)) {
-        return false;
+        continue;
       }
 
       // 4. Civilization Tag checking
@@ -1360,53 +1359,107 @@ export default function App() {
       if (queryCiv === 'agt') {
         queryCiv = 'alliance of galactic travellers';
       }
+      let civMatches = true;
       if (queryCiv && queryCiv !== 'all') {
         const rowCivsStr = String(row[34] || '').trim().toLowerCase();
         if (!rowCivsStr.includes(queryCiv)) {
-          return false;
+          civMatches = false;
         }
+      }
+      if (!civMatches) {
+        continue;
       }
 
       // 5. Named Traveller(s) checking
       const queryTraveller = travellerFilter.trim().toLowerCase();
+      let travellerMatches = true;
       if (queryTraveller) {
         const rowTravellerStr = String(row[5] || '').trim().toLowerCase();
         const parts = rowTravellerStr.split(',').map(p => p.trim()).filter(Boolean);
         if (parts.length > 0) {
           const matches = parts.some(part => part.includes(queryTraveller));
           if (!matches) {
-            return false;
+            travellerMatches = false;
           }
         } else {
-          return false;
+          travellerMatches = false;
         }
+      }
+      if (!travellerMatches) {
+        continue;
       }
 
       // 6. Location checking if Filter By Location is enabled
+      let locationMatches = true;
       if (filterByLocation) {
         if (systemFilter.trim()) {
           const rowSystem = String(row[8] || '').trim().toLowerCase();
           if (!rowSystem.includes(systemFilter.trim().toLowerCase())) {
-            return false;
+            locationMatches = false;
           }
         }
         if (regionFilter.trim()) {
           const rowRegion = String(row[9] || '').trim().toLowerCase();
           if (!rowRegion.includes(regionFilter.trim().toLowerCase())) {
-            return false;
+            locationMatches = false;
           }
         }
         if (galaxyFilter.trim()) {
           const rowGalaxy = String(row[10] || '').trim().toLowerCase();
           if (!rowGalaxy.includes(galaxyFilter.trim().toLowerCase())) {
-            return false;
+            locationMatches = false;
           }
         }
       }
+      if (!locationMatches) {
+        continue;
+      }
 
-      return true;
-    });
-  }, [data, startDate, endDate, selectedCategories, selectedSignificance, civFilter, travellerFilter, eventTypeList, filterByLocation, systemFilter, regionFilter, galaxyFilter, savedTravellerName, savedTravellerId, savedSecurityLevel, searchWord]);
+      const rowSec = getRowSecurityLevel(row);
+
+      // check if it meets everything but is above security level
+      if (rowSec > maxAllowedSecurity) {
+        omittedCount++;
+        continue;
+      }
+
+      // 7. Omit Public / Private check (only applicable if verified)
+      if (savedTravellerName && savedTravellerId) {
+        if (omitPublicRecords && rowSec === 0) {
+          continue;
+        }
+        if (omitPrivateRecords && rowSec > 0) {
+          continue;
+        }
+      }
+
+      filtered.push(row);
+    }
+
+    return {
+      filteredRecords: filtered,
+      classifiedOmittedCount: omittedCount
+    };
+  }, [
+    data, 
+    startDate, 
+    endDate, 
+    selectedCategories, 
+    selectedSignificance, 
+    civFilter, 
+    travellerFilter, 
+    eventTypeList, 
+    filterByLocation, 
+    systemFilter, 
+    regionFilter, 
+    galaxyFilter, 
+    savedTravellerName, 
+    savedTravellerId, 
+    savedSecurityLevel, 
+    searchWord,
+    omitPublicRecords,
+    omitPrivateRecords
+  ]);
 
   // Sorted events chronologically (earliest to latest format)
   const sortedEvents = useMemo(() => {
@@ -1433,6 +1486,16 @@ export default function App() {
       const rowSec = getRowSecurityLevel(row);
       if (rowSec > maxAllowedSecurity) {
         return false;
+      }
+
+      // 0.5. Omit Public / Private check (only applicable if verified)
+      if (savedTravellerName && savedTravellerId) {
+        if (omitPublicRecords && rowSec === 0) {
+          return false;
+        }
+        if (omitPrivateRecords && rowSec > 0) {
+          return false;
+        }
       }
 
       // 1. Date Range checking
@@ -1525,7 +1588,7 @@ export default function App() {
       return dateA.getTime() - dateB.getTime();
     });
     return sorted;
-  }, [data, startDate, endDate, selectedCategories, civFilter, travellerFilter, eventTypeList, filterByLocation, systemFilter, regionFilter, galaxyFilter, savedTravellerName, savedTravellerId, savedSecurityLevel, searchWord]);
+  }, [data, startDate, endDate, selectedCategories, civFilter, travellerFilter, eventTypeList, filterByLocation, systemFilter, regionFilter, galaxyFilter, savedTravellerName, savedTravellerId, savedSecurityLevel, searchWord, omitPublicRecords, omitPrivateRecords]);
 
   // Format a Date into DD-MMM-YYYY format
   const formatDdMmmYyyy = (date: Date): string => {
@@ -2381,15 +2444,49 @@ export default function App() {
 
               {/* Filter by Location checkbox toggle */}
               <div className="md:col-span-2 border-t border-[#FF0500]/20 pt-4 flex flex-col gap-4">
-                <label className="flex items-center gap-3 text-xs text-agt-orange hover:text-white cursor-pointer select-none font-bold uppercase tracking-wider font-sans">
-                  <input
-                    type="checkbox"
-                    checked={filterByLocation}
-                    onChange={(e) => setFilterByLocation(e.target.checked)}
-                    className="w-4 h-4 accent-[#FF0500] cursor-pointer bg-black/40 border border-[#FF0500]/40 rounded text-red-500 focus:ring-0 focus:ring-offset-0"
-                  />
-                  <span>Filter by Location</span>
-                </label>
+                <div className="flex flex-wrap items-center gap-6">
+                  <label className="flex items-center gap-3 text-xs text-agt-orange hover:text-white cursor-pointer select-none font-bold uppercase tracking-wider font-sans">
+                    <input
+                      type="checkbox"
+                      checked={filterByLocation}
+                      onChange={(e) => setFilterByLocation(e.target.checked)}
+                      className="w-4 h-4 accent-[#FF0500] cursor-pointer bg-black/40 border border-[#FF0500]/40 rounded text-red-500 focus:ring-0 focus:ring-offset-0"
+                    />
+                    <span>Filter by Location</span>
+                  </label>
+
+                  {savedTravellerName && savedTravellerId && (
+                    <>
+                      <label className="flex items-center gap-3 text-xs text-agt-orange hover:text-white cursor-pointer select-none font-bold uppercase tracking-wider font-sans">
+                        <input
+                          type="checkbox"
+                          checked={omitPublicRecords}
+                          onChange={(e) => {
+                            const val = e.target.checked;
+                            setOmitPublicRecords(val);
+                            if (val) setOmitPrivateRecords(false);
+                          }}
+                          className="w-4 h-4 accent-[#FF0500] cursor-pointer bg-black/40 border border-[#FF0500]/40 rounded text-red-500 focus:ring-0 focus:ring-offset-0"
+                        />
+                        <span>Omit Public Records</span>
+                      </label>
+
+                      <label className="flex items-center gap-3 text-xs text-agt-orange hover:text-white cursor-pointer select-none font-bold uppercase tracking-wider font-sans">
+                        <input
+                          type="checkbox"
+                          checked={omitPrivateRecords}
+                          onChange={(e) => {
+                            const val = e.target.checked;
+                            setOmitPrivateRecords(val);
+                            if (val) setOmitPublicRecords(false);
+                          }}
+                          className="w-4 h-4 accent-[#FF0500] cursor-pointer bg-black/40 border border-[#FF0500]/40 rounded text-red-500 focus:ring-0 focus:ring-offset-0"
+                        />
+                        <span>Omit Private Records</span>
+                      </label>
+                    </>
+                  )}
+                </div>
               </div>
 
               {/* Dynamic Location Filters conditional on checked state */}
@@ -2573,12 +2670,20 @@ export default function App() {
             </div>
 
             {/* Diagnostics Stats and Clear option */}
-            <div className="pt-2 flex flex-wrap items-center justify-between gap-4 text-[10px] uppercase tracking-widest text-[#FF0500]/70 border-t border-[#FF0500]/20 pt-4">
-              <div className="flex items-center gap-2">
-                <span className="text-agt-orange/50">Historical Records Available:</span>
-                <span className="font-mono text-white bg-red-950/40 border border-[#FF0500]/20 px-2 py-0.5 rounded font-bold">
-                  {loading ? '...' : sortedEvents.length}
-                </span>
+            <div className="pt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-[10px] uppercase tracking-widest text-[#FF0500]/70 border-t border-[#FF0500]/20 pt-4">
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-agt-orange/50">Historical Records Available:</span>
+                  <span className="font-mono text-white bg-red-950/40 border border-[#FF0500]/20 px-2 py-0.5 rounded font-bold">
+                    {loading ? '...' : sortedEvents.length}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-agt-orange/50">Classified Records Omitted:</span>
+                  <span className="font-mono text-white bg-red-950/40 border border-[#FF0500]/20 px-2 py-0.5 rounded font-bold">
+                    {loading ? '...' : classifiedOmittedCount}
+                  </span>
+                </div>
               </div>
               
               <button
@@ -2594,6 +2699,8 @@ export default function App() {
                   setCivFilter('');
                   setTravellerFilter('');
                   setFilterByLocation(false);
+                  setOmitPublicRecords(false);
+                  setOmitPrivateRecords(false);
                   setSystemFilter('');
                   setRegionFilter('');
                   setGalaxyFilter('');
@@ -2711,9 +2818,9 @@ export default function App() {
               initial={{ scale: 0.92, opacity: 0, y: 30 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.92, opacity: 0, y: 30 }}
-              className="relative max-w-md w-full bg-[#161616] border-2 border-[#FF0500] rounded-2xl overflow-hidden glass-card shadow-[0_15px_60px_rgba(255,5,0,0.25)] p-6 z-10"
+              className="relative max-w-md w-full max-h-[85vh] md:max-h-[90vh] bg-[#161616] border-2 border-[#FF0500] rounded-2xl overflow-hidden glass-card shadow-[0_15px_60px_rgba(255,5,0,0.25)] p-6 z-10 flex flex-col"
             >
-              <div className="flex items-center justify-between border-b border-[#FF0500]/30 pb-4 mb-6">
+              <div className="flex items-center justify-between border-b border-[#FF0500]/30 pb-4 mb-6 shrink-0">
                 <h3 className="text-sm uppercase tracking-widest font-black text-agt-orange flex items-center gap-2">
                   <Settings className="w-4 h-4 text-[#FF0500]" />
                   Configuration Settings
@@ -2727,13 +2834,12 @@ export default function App() {
                 </button>
               </div>
 
-              <div className="space-y-6">
+              <div className="space-y-6 overflow-y-auto pr-1 flex-1 custom-scrollbar min-h-0">
                 {/* Font proportions scaling config */}
                 <div className="space-y-2">
                   <label className="text-xs uppercase tracking-widest font-black text-agt-orange/50 block">
                     Desktop Text Scale
                   </label>
-                  <p className="text-[10px] text-agt-orange/30 italic">Scaling factor of typography inside widescreen environments.</p>
                   <select
                     value={fontScale}
                     onChange={(e) => setFontScale(e.target.value)}
@@ -2751,9 +2857,8 @@ export default function App() {
                 <div className="pt-4 border-t border-[#FF0500]/25 space-y-4">
                   <div>
                     <h4 className="text-xs uppercase tracking-widest font-black text-agt-orange block mb-1">
-                      Traveller ID & Clearance
+                      AGT Traveller Registration
                     </h4>
-                    <p className="text-[10px] text-agt-orange/30 italic">Verify your credentials and claim your security clearance level.</p>
                   </div>
 
                   <div className="space-y-3">
@@ -2789,15 +2894,7 @@ export default function App() {
                     </div>
                   </div>
 
-                  {savedTravellerName && savedTravellerId ? (
-                    <div className="bg-[#FF0500]/10 border border-[#FF0500]/30 rounded-xl p-3 text-[10px] space-y-1">
-                      <div className="font-bold uppercase tracking-wider text-green-400">STATUS: VERIFIED</div>
-                      <div className="text-white/80 font-mono">Cleared Name: {savedTravellerName}</div>
-                      <div className="text-white/80 font-mono">
-                        Level: {["Public (0)", "Private (1)", "Restricted (2)", "Top Secret (3)", "SLT Restricted (4)", "SCC Restricted (5)"][savedSecurityLevel] ?? savedSecurityLevel}
-                      </div>
-                    </div>
-                  ) : (
+                  {!savedTravellerName && !savedTravellerId && (
                     <div className="bg-black/30 border border-white/5 rounded-xl p-3 text-[10px]">
                       <div className="font-bold uppercase tracking-wider text-yellow-500/80">STATUS: PUBLIC PREVIEW</div>
                     </div>
@@ -2827,6 +2924,13 @@ export default function App() {
                       Reset
                     </button>
                   </div>
+
+                  {savedTravellerName && savedTravellerId && (
+                    <div className="flex items-center justify-between text-[10px] font-mono pt-3 border-t border-[#FF0500]/25">
+                      <span className="text-white">Verified User: <span className="text-white font-bold">{savedTravellerName}</span></span>
+                      <span className="text-green-400">Clearance: <span className="text-green-400 font-bold">{["Public (0)", "Private (1)", "Restricted (2)", "Top Secret (3)", "SLT Restricted (4)", "SCC Restricted (5)"][savedSecurityLevel] ?? `Level ${savedSecurityLevel}`}</span></span>
+                    </div>
+                  )}
                 </div>
 
                 {/* Ambient music control loop */}
