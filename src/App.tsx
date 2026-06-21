@@ -157,6 +157,8 @@ const isRawDateValid = (val: string): boolean => {
   if (d < 1 || d > 31) return false;
   if (y < 2016 || y > 2100) return false; // sheets data bounds
   const dateObj = new Date(y, m - 1, d);
+  const earliestDate = new Date(2016, 7, 9); // 9-Aug-2016
+  if (dateObj.getTime() < earliestDate.getTime()) return false;
   return dateObj.getFullYear() === y && dateObj.getMonth() === m - 1 && dateObj.getDate() === d;
 };
 
@@ -983,6 +985,7 @@ export default function App() {
   useEffect(() => {
     const scaleValues: Record<string, number> = {
       '1x': 1.0,
+      '1.25x': 1.25,
       '1.5x': 1.5,
       '2x': 2.0,
       '2.5x': 2.5,
@@ -2026,6 +2029,20 @@ export default function App() {
         </div>
       </header>
 
+      {/* Contribute button placed after the header */}
+      <div className="relative max-w-5xl mx-auto w-full px-6 shrink-0">
+        <div className="absolute top-4 right-6 z-40">
+          <button
+            type="button"
+            onClick={() => window.open("https://www.nms-agt.com/contribute", "_blank")}
+            className="py-2 px-5 bg-[#FF0500] text-white hover:bg-[#ff3330] rounded-full font-black text-[10px] uppercase tracking-[0.2em] shadow-[0_2px_8px_rgba(255,5,0,0.3)] hover:shadow-[0_0_12px_rgba(255,5,0,0.5)] active:scale-[0.98] transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+          >
+            <ExternalLink className="w-3 h-3 text-white" />
+            <span>Contribute</span>
+          </button>
+        </div>
+      </div>
+
       {/* Main Container screen */}
       <main className="max-w-5xl mx-auto px-6 py-12 flex-grow flex flex-col justify-center">
         <div className="w-full max-w-2xl mx-auto space-y-12">
@@ -2112,7 +2129,7 @@ export default function App() {
                   </div>
                 </div>
                 <span className="text-[9px] text-[#FFB451]/60 italic mt-0.5 ml-1">
-                  (Earliest date: 15-Apr-2017)
+                  (Earliest date: 9-Aug-2016)
                 </span>
               </div>
 
@@ -2794,6 +2811,7 @@ export default function App() {
                     className="w-full bg-[#1c1c1c] border border-[#FF0500]/40 focus:outline-none focus:ring-1 focus:ring-[#FF0500] px-3.5 py-2.5 text-xs text-agt-orange rounded-xl cursor-pointer"
                   >
                     <option value="1x">1.0x (Standard)</option>
+                    <option value="1.25x">1.25x (Medium)</option>
                     <option value="1.5x">1.5x (Large)</option>
                     <option value="2x">2.0x (Very Large)</option>
                     <option value="2.5x">2.5x (Huge)</option>
