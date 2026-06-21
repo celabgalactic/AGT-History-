@@ -21,7 +21,11 @@ import {
   ExternalLink,
   Lock,
   BookOpen,
-  FileText
+  FileText,
+  Radar,
+  Compass,
+  Globe,
+  Info
 } from 'lucide-react';
 import Papa from 'papaparse';
 import { jsPDF } from "jspdf";
@@ -334,12 +338,390 @@ const getSecurityLevelInfo = (levelNum: number) => {
   return levels[levelNum] || levels[0];
 };
 
+const parseCoordinates = (coordStr: string) => {
+  const clean = coordStr.replace(/[\[\]\(\)\s]/g, '').trim();
+  const parts = clean.split(/[:\/-]/);
+  if (parts.length >= 3) {
+    const x = parseInt(parts[0], 16);
+    const y = parseInt(parts[1], 16);
+    const z = parseInt(parts[2], 16);
+    const s = parts.length >= 4 ? parseInt(parts[3], 16) : 0;
+    return {
+      x: isNaN(x) ? 2047 : x,
+      y: isNaN(y) ? 127 : y,
+      z: isNaN(z) ? 2047 : z,
+      s: isNaN(s) ? 0 : s,
+      valid: !isNaN(x) && !isNaN(y) && !isNaN(z)
+    };
+  }
+  return { x: 2047, y: 127, z: 2047, s: 0, valid: false };
+};
+
+const GalaxyMapPopup = ({
+  coordinate,
+  galaxy,
+  onClose
+}: {
+  coordinate: string;
+  galaxy: string;
+  onClose: () => void;
+}) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const parsed = parseCoordinates(coordinate);
+  
+  const nx = (parsed.x - 2047) / 2048;
+  const ny = (parsed.y - 127) / 128;
+  const nz = (parsed.z - 2047) / 2048;
+  
+  const dx = parsed.x - 2047;
+  const dy = parsed.y - 127;
+  const dz = parsed.z - 2047;
+  const distanceLY = Math.round(Math.sqrt(dx * dx + dy * dy + dz * dz) * 400);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    let animationId: number;
+    let angle = 0;
+    
+    const starCount = 150;
+    const stars: { x: number; y: number; s: number; alpha: number }[] = [];
+    for (let i = 0; i < starCount; i++) {
+      stars.push({
+        x: Math.random() * 2 - 1,
+        y: Math.random() * 2 - 1,
+        s: Math.random() * 1.5 + 0.5,
+        alpha: Math.random()
+      });
+    }
+
+    const galaxyParticles: { r: number; theta: number; armOffset: number; size: number; baseColor: string }[] = [];
+    const arms = 4;
+    const particlesPerArm = 120;
+    const colors = [
+      'rgba(241, 152, 226, 0.4)',
+      'rgba(0, 244, 255, 0.4)',
+      'rgba(42, 255, 0, 0.4)',
+      'rgba(255, 147, 0, 0.4)',
+    ];
+    for (let arm = 0; arm < arms; arm++) {
+      const baseAngle = (arm * 2 * Math.PI) / arms;
+      for (let i = 0; i < particlesPerArm; i++) {
+        const ratio = i / particlesPerArm;
+        const r = ratio * 0.9 + 0.05;
+        const theta = baseAngle + r * 5.5 + (Math.random() - 0.5) * 0.35;
+        galaxyParticles.push({
+          r,
+          theta,
+          armOffset: (Math.random() - 0.5) * 0.08,
+          size: Math.random() * 1.5 + 0.5,
+          baseColor: colors[Math.floor(Math.random() * colors.length)]
+        });
+      }
+    }
+
+    const resizeAndRender = () => {
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      ctx.scale(dpr, dpr);
+      
+      const width = rect.width;
+      const height = rect.height;
+      
+      const render = () => {
+        angle += 0.007;
+        
+        ctx.fillStyle = '#050510';
+        ctx.fillRect(0, 0, width, height);
+        
+        const cx = width / 2;
+        const cy = height * 0.55;
+        const rMax = Math.min(width, height) * 0.42;
+        
+        const pitch = 28 * Math.PI / 180;
+        const cosP = Math.cos(pitch);
+        const sinP = Math.sin(pitch);
+        
+        const project = (x3d: number, y3d: number, z3d: number) => {
+          const cosY = Math.cos(angle);
+          const sinY = Math.sin(angle);
+          const rx = x3d * cosY - z3d * sinY;
+          const rz = x3d * sinY + z3d * cosY;
+          
+          const px = rx;
+          const py = y3d * cosP - rz * sinP;
+          
+          return {
+            x: cx + px * rMax,
+            y: cy - py * rMax,
+            z: rz
+          };
+        };
+
+        ctx.save();
+        stars.forEach(s => {
+          const screenX = cx + s.x * rMax * 1.5;
+          const screenY = cy + s.y * rMax * 1.5;
+          if (screenX >= 0 && screenX <= width && screenY >= 0 && screenY <= height) {
+            const opacity = s.alpha * 0.3 + Math.abs(Math.sin(Date.now() / 1500 + s.x * 100)) * 0.5;
+            ctx.fillStyle = `rgba(255, 255, 255, ${opacity})`;
+            ctx.fillRect(screenX, screenY, s.s, s.s);
+          }
+        });
+        ctx.restore();
+
+        ctx.strokeStyle = 'rgba(255, 5, 0, 0.12)';
+        ctx.lineWidth = 1;
+        const gridRings = [0.25, 0.5, 0.75, 1.0];
+        gridRings.forEach(ringR => {
+          ctx.beginPath();
+          for (let step = 0; step <= 80; step++) {
+            const rad = (step * 2 * Math.PI) / 80;
+            const gx = Math.cos(rad) * ringR;
+            const gz = Math.sin(rad) * ringR;
+            const pt = project(gx, 0, gz);
+            if (step === 0) {
+              ctx.moveTo(pt.x, pt.y);
+            } else {
+              ctx.lineTo(pt.x, pt.y);
+            }
+          }
+          ctx.stroke();
+          
+          const labelPt = project(ringR, 0, 0);
+          ctx.fillStyle = 'rgba(255, 180, 81, 0.45)';
+          ctx.font = '8px monospace';
+          ctx.fillText(`${Math.round(ringR * 1000000)} LY`, labelPt.x + 3, labelPt.y - 3);
+        });
+
+        ctx.strokeStyle = 'rgba(255, 180, 81, 0.15)';
+        ctx.beginPath();
+        let ptA = project(-1, 0, 0);
+        let ptB = project(1, 0, 0);
+        ctx.moveTo(ptA.x, ptA.y);
+        ctx.lineTo(ptB.x, ptB.y);
+        ptA = project(0, 0, -1);
+        ptB = project(0, 0, 1);
+        ctx.moveTo(ptA.x, ptA.y);
+        ctx.lineTo(ptB.x, ptB.y);
+        ctx.stroke();
+
+        galaxyParticles.forEach(p => {
+          const x3d = Math.cos(p.theta) * p.r + p.armOffset;
+          const z3d = Math.sin(p.theta) * p.r + p.armOffset;
+          const y3d = (Math.sin(p.theta * 5) * 0.05) * (1 - p.r);
+          
+          const pt = project(x3d, y3d, z3d);
+          
+          ctx.fillStyle = p.baseColor;
+          ctx.beginPath();
+          const coreFactor = (1 - p.r) * 1.5 + 0.5;
+          ctx.arc(pt.x, pt.y, p.size * coreFactor, 0, 2 * Math.PI);
+          ctx.fill();
+        });
+
+        const corePt = project(0, 0, 0);
+        const coreGrad = ctx.createRadialGradient(corePt.x, corePt.y, 0, corePt.x, corePt.y, rMax * 0.16);
+        coreGrad.addColorStop(0, '#FFFFFF');
+        coreGrad.addColorStop(0.2, 'rgba(255, 180, 81, 0.85)');
+        coreGrad.addColorStop(0.5, 'rgba(255, 5, 0, 0.35)');
+        coreGrad.addColorStop(1, 'rgba(255, 5, 0, 0)');
+        
+        ctx.fillStyle = coreGrad;
+        ctx.beginPath();
+        ctx.arc(corePt.x, corePt.y, rMax * 0.16, 0, 2 * Math.PI);
+        ctx.fill();
+
+        const targetPt = project(nx, ny, nz);
+        const groundPt = project(nx, 0, nz);
+
+        ctx.strokeStyle = 'rgba(255, 5, 0, 0.6)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(groundPt.x, groundPt.y);
+        ctx.lineTo(targetPt.x, targetPt.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        ctx.fillStyle = 'rgba(255, 180, 81, 0.8)';
+        ctx.beginPath();
+        ctx.arc(groundPt.x, groundPt.y, 3, 0, 2 * Math.PI);
+        ctx.fill();
+
+        const targetRadius = Math.sqrt(nx * nx + nz * nz);
+        ctx.strokeStyle = 'rgba(255, 180, 81, 0.22)';
+        ctx.beginPath();
+        for (let step = 0; step <= 80; step++) {
+          const rad = (step * 2 * Math.PI) / 80;
+          const gx = Math.cos(rad) * targetRadius;
+          const gz = Math.sin(rad) * targetRadius;
+          const pt = project(gx, 0, gz);
+          if (step === 0) {
+            ctx.moveTo(pt.x, pt.y);
+          } else {
+            ctx.lineTo(pt.x, pt.y);
+          }
+        }
+        ctx.stroke();
+
+        const pulse = Math.sin(Date.now() / 180) * 0.45 + 0.55;
+        
+        ctx.strokeStyle = `rgba(255, 5, 0, ${0.4 + pulse * 0.6})`;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(targetPt.x, targetPt.y, 7 + pulse * 6, 0, 2 * Math.PI);
+        ctx.stroke();
+
+        ctx.strokeStyle = `rgba(255, 5, 0, 0.85)`;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(targetPt.x - 12, targetPt.y);
+        ctx.lineTo(targetPt.x + 12, targetPt.y);
+        ctx.moveTo(targetPt.x, targetPt.y - 12);
+        ctx.lineTo(targetPt.x, targetPt.y + 12);
+        ctx.stroke();
+
+        ctx.fillStyle = '#FFFFFF';
+        ctx.beginPath();
+        ctx.arc(targetPt.x, targetPt.y, 3.5, 0, 2 * Math.PI);
+        ctx.fill();
+
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+        ctx.font = 'bold 9px monospace';
+        const tagText = `${parsed.x.toString(16).toUpperCase().padStart(4, '0')}:${parsed.y.toString(16).toUpperCase().padStart(4, '0')}:${parsed.z.toString(16).toUpperCase().padStart(4, '0')}`;
+        ctx.fillText(tagText, targetPt.x + 15, targetPt.y - 4);
+        
+        ctx.fillStyle = 'rgba(255, 180, 81, 0.8)';
+        ctx.font = '8px monospace';
+        ctx.fillText(`Y: ${parsed.y} (Alt)`, targetPt.x + 15, targetPt.y + 6);
+
+        animationId = requestAnimationFrame(render);
+      };
+      
+      animationId = requestAnimationFrame(render);
+    };
+
+    resizeAndRender();
+    window.addEventListener('resize', resizeAndRender);
+
+    return () => {
+      cancelAnimationFrame(animationId);
+      window.removeEventListener('resize', resizeAndRender);
+    };
+  }, [nx, ny, nz, parsed.x, parsed.y, parsed.z]);
+
+  return (
+    <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+      <div 
+        onClick={onClose}
+        className="absolute inset-0 bg-black/85 backdrop-blur-sm"
+      />
+
+      <div className="relative max-w-2xl w-full bg-[#0d0d0d] border border-[#FF0500]/40 rounded-2xl shadow-[0_0_40px_rgba(255,5,0,0.2)] flex flex-col overflow-hidden z-10">
+        <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-[#FF0500] to-transparent"></div>
+        
+        <div className="px-6 py-4 border-b border-[#FF0500]/20 bg-black/40 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <Radar className="w-4 h-4 text-[#FF0500] animate-pulse" />
+            <span className="text-xs uppercase font-black tracking-[0.2em] text-white font-mono">
+              AGT Mini Navi Region Locator
+            </span>
+          </div>
+          <button 
+            onClick={onClose}
+            className="p-1.5 bg-red-950/40 hover:bg-red-500 hover:text-white text-[#FF0500] border border-red-500/20 rounded-md transition-colors cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="flex flex-col md:flex-row h-[420px] bg-black/35">
+          <div className="w-full md:w-72 border-r border-[#FF0500]/15 p-5 flex flex-col justify-between space-y-4 font-mono select-none">
+            <div className="space-y-4">
+              <div>
+                <span className="text-[9px] uppercase tracking-wider text-[#FFB451]/50 block">Active Address</span>
+                <span className="text-sm font-black text-white hover:text-red-400 font-mono tracking-widest">{coordinate}</span>
+              </div>
+
+              <div className="h-px bg-[#FF0500]/15"></div>
+
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <div>
+                  <span className="text-[9px] uppercase text-[#FFB451]/50 block">Voxel X</span>
+                  <span className="font-bold text-white">{parsed.x} <span className="text-[10px] text-[#FFB451]/40">(0x{parsed.x.toString(16).toUpperCase().padStart(4, '0')})</span></span>
+                </div>
+                <div>
+                  <span className="text-[9px] uppercase text-[#FFB451]/50 block">Voxel Y (Height)</span>
+                  <span className="font-bold text-white">{parsed.y} <span className="text-[10px] text-[#FFB451]/40">(0x{parsed.y.toString(16).toUpperCase().padStart(4, '0')})</span></span>
+                </div>
+                <div>
+                  <span className="text-[9px] uppercase text-[#FFB451]/50 block">Voxel Z</span>
+                  <span className="font-bold text-white">{parsed.z} <span className="text-[10px] text-[#FFB451]/40">(0x{parsed.z.toString(16).toUpperCase().padStart(4, '0')})</span></span>
+                </div>
+                <div>
+                  <span className="text-[9px] uppercase text-[#FFB451]/50 block">System Index</span>
+                  <span className="font-bold text-white">{parsed.s} <span className="text-[10px] text-[#FFB451]/40">(0x{parsed.s.toString(16).toUpperCase().padStart(4, '0')})</span></span>
+                </div>
+              </div>
+
+              <div className="h-px bg-[#FF0500]/15"></div>
+
+              <div className="space-y-2 text-xs">
+                <div>
+                  <span className="text-[9px] uppercase text-[#FFB451]/50 block">Primary Galaxy</span>
+                  <span className="font-bold text-agt-orange uppercase tracking-wider">{galaxy || 'Euclid'}</span>
+                </div>
+                <div>
+                  <span className="text-[9px] uppercase text-[#FFB451]/50 block">Distance to Center</span>
+                  <span className="font-bold text-[#2AFF00] tracking-wide">{distanceLY.toLocaleString()} LY</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-red-950/20 border border-red-500/15 rounded-lg p-3 text-[10px] text-agt-orange/70 space-y-1.5 leading-relaxed">
+              <div className="flex items-center gap-1.5 text-white font-bold uppercase tracking-wider">
+                <Compass className="w-3.5 h-3.5 text-[#FFB451] animate-spin-slow" />
+                <span>Diagnostic Scan</span>
+              </div>
+              <p>Cosmic telemetry acquired. Voxel projection aligned to standard galactic density map.</p>
+              <div className="text-[8px] tracking-widest text-[#FF0500] uppercase font-black">
+                ● CORE RESOLUTION STRENGTH: 99.8%
+              </div>
+            </div>
+          </div>
+
+          <div className="flex-1 relative bg-gradient-to-b from-black to-red-950/10">
+            <canvas 
+              ref={canvasRef} 
+              className="w-full h-full block"
+            />
+            <div className="absolute bottom-4 right-4 text-[9px] font-mono select-none px-2 py-1 bg-black/60 border border-[#FF0500]/20 text-[#FFB451]/60 rounded uppercase tracking-wider">
+              3D PERSPECTIVE ORBIT: slow_rot
+            </div>
+            <div className="absolute top-4 left-4 text-[9px] font-mono select-none text-red-500/40 uppercase">
+              GRID: CONCENTRIC RADIUS 1,000,000 LY
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const SingleTimelineEventDetailModal = ({
   event,
-  onClose
+  onClose,
+  onOpenMap
 }: {
   event: string[];
   onClose: () => void;
+  onOpenMap?: (coord: string, gal: string) => void;
 }) => {
   const getEventStartDateLocal = (row: string[]): Date | null => {
     const dStr = row[18];
@@ -574,9 +956,29 @@ const SingleTimelineEventDetailModal = ({
 
               {/* Event Location Line (If available) */}
               {locationText && (
-                <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider font-sans text-agt-orange/50">
-                  <MapPin className="w-3.5 h-3.5 text-[#FFB451]/60 shrink-0" />
-                  <span>Location: {locationText}</span>
+                <div 
+                  onClick={() => {
+                    const coord = event[35] ? String(event[35]).trim() : '';
+                    const gal = event[10] ? String(event[10]).trim() : '';
+                    if (coord && onOpenMap) {
+                      onOpenMap(coord, gal);
+                    }
+                  }}
+                  className={`flex items-center gap-2 text-[10px] uppercase tracking-wider font-sans text-agt-orange/50 ${
+                    (event[35] && String(event[35]).trim()) ? 'cursor-pointer hover:text-[#ff3330] hover:scale-[1.01] transition-all group' : ''
+                  }`}
+                >
+                  <MapPin className={`w-3.5 h-3.5 text-[#FFB451]/60 shrink-0 ${
+                    (event[35] && String(event[35]).trim()) ? 'group-hover:text-[#FF0500] animate-pulse' : ''
+                  }`} />
+                  <span>
+                    Location: {locationText}
+                    {event[35] && String(event[35]).trim() && (
+                      <span className="ml-2 text-[8px] tracking-widest text-[#FF0500] bg-[#FF0500]/10 px-1.5 py-0.5 rounded border border-[#FF0500]/20 font-mono">
+                        SCAN COORD: {String(event[35]).trim()}
+                      </span>
+                    )}
+                  </span>
                 </div>
               )}
 
@@ -1040,6 +1442,7 @@ export default function App() {
   // Major Timeline state managers
   const [showMajorTimeline, setShowMajorTimeline] = useState(false);
   const [selectedTimelineEvent, setSelectedTimelineEvent] = useState<string[] | null>(null);
+  const [activeMapCoordinate, setActiveMapCoordinate] = useState<{ coordinate: string; galaxy: string } | null>(null);
   const [pdfExporting, setPdfExporting] = useState(false);
 
   // Sync custom formatted dates
@@ -3083,9 +3486,29 @@ export default function App() {
 
                         {/* Event Location Line (If available) */}
                         {locationText && (
-                          <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider font-sans text-agt-orange/50">
-                            <MapPin className="w-3.5 h-3.5 text-[#FFB451]/60 shrink-0" />
-                            <span>Location: {locationText}</span>
+                          <div 
+                            onClick={() => {
+                              const coord = activeEvent[35] ? String(activeEvent[35]).trim() : '';
+                              const gal = activeEvent[10] ? String(activeEvent[10]).trim() : '';
+                              if (coord) {
+                                setActiveMapCoordinate({ coordinate: coord, galaxy: gal });
+                              }
+                            }}
+                            className={`flex items-center gap-2 text-[10px] uppercase tracking-wider font-sans text-agt-orange/50 ${
+                              (activeEvent[35] && String(activeEvent[35]).trim()) ? 'cursor-pointer hover:text-[#ff3330] hover:scale-[1.01] transition-all group' : ''
+                            }`}
+                          >
+                            <MapPin className={`w-3.5 h-3.5 text-[#FFB451]/60 shrink-0 ${
+                              (activeEvent[35] && String(activeEvent[35]).trim()) ? 'group-hover:text-[#FF0500] animate-pulse' : ''
+                            }`} />
+                            <span>
+                              Location: {locationText}
+                              {activeEvent[35] && String(activeEvent[35]).trim() && (
+                                <span className="ml-2 text-[8px] tracking-widest text-[#FF0500] bg-[#FF0500]/10 px-1.5 py-0.5 rounded border border-[#FF0500]/20 font-mono">
+                                  SCAN COORD: {String(activeEvent[35]).trim()}
+                                </span>
+                              )}
+                            </span>
                           </div>
                         )}
 
@@ -3446,6 +3869,7 @@ export default function App() {
           <SingleTimelineEventDetailModal 
             event={selectedTimelineEvent}
             onClose={() => setSelectedTimelineEvent(null)}
+            onOpenMap={(coord, gal) => setActiveMapCoordinate({ coordinate: coord, galaxy: gal })}
           />
         )}
       </AnimatePresence>
@@ -3553,6 +3977,17 @@ export default function App() {
               </button>
             </motion.div>
           </div>
+        )}
+      </AnimatePresence>
+
+      {/* GALAXY NAVIGATION MAP POPUP DETECTOR */}
+      <AnimatePresence>
+        {activeMapCoordinate && (
+          <GalaxyMapPopup
+            coordinate={activeMapCoordinate.coordinate}
+            galaxy={activeMapCoordinate.galaxy}
+            onClose={() => setActiveMapCoordinate(null)}
+          />
         )}
       </AnimatePresence>
     </div>
