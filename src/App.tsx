@@ -434,7 +434,7 @@ const GalaxyMapPopup = ({
       const height = rect.height;
       
       const render = () => {
-        angle += 0.007;
+        angle += 0.00525;
         
         ctx.fillStyle = '#050510';
         ctx.fillRect(0, 0, width, height);
@@ -623,14 +623,14 @@ const GalaxyMapPopup = ({
         className="absolute inset-0 bg-black/85 backdrop-blur-sm"
       />
 
-      <div className="relative max-w-2xl w-full bg-[#0d0d0d] border border-[#FF0500]/40 rounded-2xl shadow-[0_0_40px_rgba(255,5,0,0.2)] flex flex-col overflow-hidden z-10">
+      <div className="relative max-w-xl w-full bg-[#0d0d0d] border border-[#FF0500]/40 rounded-2xl shadow-[0_0_40px_rgba(255,5,0,0.3)] flex flex-col overflow-hidden z-10">
         <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-[#FF0500] to-transparent"></div>
         
-        <div className="px-6 py-4 border-b border-[#FF0500]/20 bg-black/40 flex items-center justify-between">
+        <div className="px-5 py-3.5 border-b border-[#FF0500]/20 bg-black/50 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <Radar className="w-4 h-4 text-[#FF0500] animate-pulse" />
             <span className="text-xs uppercase font-black tracking-[0.2em] text-white font-mono">
-              AGT Mini Navi Region Locator
+              AGT Mini NAVI
             </span>
           </div>
           <button 
@@ -641,73 +641,23 @@ const GalaxyMapPopup = ({
           </button>
         </div>
 
-        <div className="flex flex-col md:flex-row h-[420px] bg-black/35">
-          <div className="w-full md:w-72 border-r border-[#FF0500]/15 p-5 flex flex-col justify-between space-y-4 font-mono select-none">
-            <div className="space-y-4">
-              <div>
-                <span className="text-[9px] uppercase tracking-wider text-[#FFB451]/50 block">Active Address</span>
-                <span className="text-sm font-black text-white hover:text-red-400 font-mono tracking-widest">{coordinate}</span>
-              </div>
-
-              <div className="h-px bg-[#FF0500]/15"></div>
-
-              <div className="grid grid-cols-2 gap-3 text-xs">
-                <div>
-                  <span className="text-[9px] uppercase text-[#FFB451]/50 block">Voxel X</span>
-                  <span className="font-bold text-white">{parsed.x} <span className="text-[10px] text-[#FFB451]/40">(0x{parsed.x.toString(16).toUpperCase().padStart(4, '0')})</span></span>
-                </div>
-                <div>
-                  <span className="text-[9px] uppercase text-[#FFB451]/50 block">Voxel Y (Height)</span>
-                  <span className="font-bold text-white">{parsed.y} <span className="text-[10px] text-[#FFB451]/40">(0x{parsed.y.toString(16).toUpperCase().padStart(4, '0')})</span></span>
-                </div>
-                <div>
-                  <span className="text-[9px] uppercase text-[#FFB451]/50 block">Voxel Z</span>
-                  <span className="font-bold text-white">{parsed.z} <span className="text-[10px] text-[#FFB451]/40">(0x{parsed.z.toString(16).toUpperCase().padStart(4, '0')})</span></span>
-                </div>
-                <div>
-                  <span className="text-[9px] uppercase text-[#FFB451]/50 block">System Index</span>
-                  <span className="font-bold text-white">{parsed.s} <span className="text-[10px] text-[#FFB451]/40">(0x{parsed.s.toString(16).toUpperCase().padStart(4, '0')})</span></span>
-                </div>
-              </div>
-
-              <div className="h-px bg-[#FF0500]/15"></div>
-
-              <div className="space-y-2 text-xs">
-                <div>
-                  <span className="text-[9px] uppercase text-[#FFB451]/50 block">Primary Galaxy</span>
-                  <span className="font-bold text-agt-orange uppercase tracking-wider">{galaxy || 'Euclid'}</span>
-                </div>
-                <div>
-                  <span className="text-[9px] uppercase text-[#FFB451]/50 block">Distance to Center</span>
-                  <span className="font-bold text-[#2AFF00] tracking-wide">{distanceLY.toLocaleString()} LY</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-red-950/20 border border-red-500/15 rounded-lg p-3 text-[10px] text-agt-orange/70 space-y-1.5 leading-relaxed">
-              <div className="flex items-center gap-1.5 text-white font-bold uppercase tracking-wider">
-                <Compass className="w-3.5 h-3.5 text-[#FFB451] animate-spin-slow" />
-                <span>Diagnostic Scan</span>
-              </div>
-              <p>Cosmic telemetry acquired. Voxel projection aligned to standard galactic density map.</p>
-              <div className="text-[8px] tracking-widest text-[#FF0500] uppercase font-black">
-                ● CORE RESOLUTION STRENGTH: 99.8%
-              </div>
-            </div>
+        <div className="relative h-[280px] sm:h-[350px] bg-gradient-to-b from-black to-red-950/10">
+          <canvas 
+            ref={canvasRef} 
+            className="w-full h-full block"
+          />
+          <div className="absolute bottom-3 right-3 text-[8px] font-mono select-none px-2 py-0.5 bg-black/75 border border-[#FF0500]/20 text-[#FFB451]/60 rounded uppercase tracking-wider">
+            ORBIT: 0.75x
           </div>
-
-          <div className="flex-1 relative bg-gradient-to-b from-black to-red-950/10">
-            <canvas 
-              ref={canvasRef} 
-              className="w-full h-full block"
-            />
-            <div className="absolute bottom-4 right-4 text-[9px] font-mono select-none px-2 py-1 bg-black/60 border border-[#FF0500]/20 text-[#FFB451]/60 rounded uppercase tracking-wider">
-              3D PERSPECTIVE ORBIT: slow_rot
-            </div>
-            <div className="absolute top-4 left-4 text-[9px] font-mono select-none text-red-500/40 uppercase">
-              GRID: CONCENTRIC RADIUS 1,000,000 LY
-            </div>
+          <div className="absolute top-3 left-3 text-[8px] font-mono select-none text-red-500/40 uppercase tracking-wider">
+            ADDR: {coordinate}
           </div>
+        </div>
+
+        <div className="px-5 py-3 border-t border-[#FF0500]/20 bg-black/60 text-center font-mono text-[10px] sm:text-xs tracking-wider select-none leading-relaxed text-stone-300">
+          PRIMARY GALAXY: <span className="font-bold text-white uppercase">{galaxy || 'Euclid'}</span>
+          <span className="mx-2 text-red-500/50">•</span>
+          DISTANCE TO CENTER: <span className="font-bold text-[#2AFF00]">{distanceLY.toLocaleString()} LY</span>
         </div>
       </div>
     </div>
@@ -975,7 +925,7 @@ const SingleTimelineEventDetailModal = ({
                     Location: {locationText}
                     {event[35] && String(event[35]).trim() && (
                       <span className="ml-2 text-[8px] tracking-widest text-[#FF0500] bg-[#FF0500]/10 px-1.5 py-0.5 rounded border border-[#FF0500]/20 font-mono">
-                        SCAN COORD: {String(event[35]).trim()}
+                        {String(event[35]).trim()}
                       </span>
                     )}
                   </span>
@@ -3505,7 +3455,7 @@ export default function App() {
                               Location: {locationText}
                               {activeEvent[35] && String(activeEvent[35]).trim() && (
                                 <span className="ml-2 text-[8px] tracking-widest text-[#FF0500] bg-[#FF0500]/10 px-1.5 py-0.5 rounded border border-[#FF0500]/20 font-mono">
-                                  SCAN COORD: {String(activeEvent[35]).trim()}
+                                  {String(activeEvent[35]).trim()}
                                 </span>
                               )}
                             </span>
