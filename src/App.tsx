@@ -25,7 +25,8 @@ import {
   Radar,
   Compass,
   Globe,
-  Info
+  Info,
+  Bug
 } from 'lucide-react';
 import Papa from 'papaparse';
 import { jsPDF } from "jspdf";
@@ -2323,12 +2324,18 @@ export default function App() {
               }}
             />
             <div className="flex flex-col">
-              <h1 className="font-bold text-xs tracking-[0.2em] uppercase text-agt-orange">Alliance of Galactic Travellers</h1>
-              <span className="text-[9px] text-agt-orange uppercase tracking-[0.3em] font-bold">Galactic Chronology terminal</span>
+              <h1 className="font-bold text-xs tracking-[0.2em] uppercase text-agt-orange">
+                <span className="hidden sm:inline">Alliance of Galactic Travellers</span>
+                <span className="inline sm:hidden">AGT</span>
+              </h1>
+              <span className="text-[9px] text-agt-orange uppercase tracking-[0.3em] font-bold">
+                <span className="hidden sm:inline">Galactic Chronology terminal</span>
+                <span className="inline sm:hidden">Chronology</span>
+              </span>
             </div>
           </div>
           
-          <div className="flex items-center gap-6">
+          <div className="flex items-center gap-3 sm:gap-6">
             <div className="hidden md:block text-[9px] text-agt-orange/30 tracking-widest font-mono">
               RECORDS: <span className={
                 loading ? 'text-yellow-500 font-bold' :
@@ -2340,28 +2347,66 @@ export default function App() {
             </div>
             
             {savedTravellerName && savedTravellerId ? (
-              <div 
-                id="header-traveller-badge"
-                style={{
-                  color: getSecurityLevelInfo(savedSecurityLevel).color,
-                  borderColor: getSecurityLevelInfo(savedSecurityLevel).color
-                }}
-                className="px-3 py-1 border rounded-lg text-xs font-bold font-mono tracking-wider"
-              >
-                {savedTravellerName.substring(0, 15)}
-              </div>
+              <>
+                <div 
+                  id="header-traveller-badge"
+                  style={{
+                    color: getSecurityLevelInfo(savedSecurityLevel).color,
+                    borderColor: getSecurityLevelInfo(savedSecurityLevel).color
+                  }}
+                  className="hidden sm:block px-3 py-1 border rounded-lg text-xs font-bold font-mono tracking-wider"
+                >
+                  {savedTravellerName.substring(0, 15)}
+                </div>
+                <button 
+                  onClick={() => setShowSettings(true)}
+                  style={{
+                    backgroundColor: getSecurityLevelInfo(savedSecurityLevel).color,
+                    borderColor: getSecurityLevelInfo(savedSecurityLevel).color
+                  }}
+                  className="block sm:hidden w-6 h-6 border rounded cursor-pointer hover:opacity-80 transition-opacity"
+                  title={`${savedTravellerName} - Level: ${getSecurityLevelInfo(savedSecurityLevel).label} (Click for Settings)`}
+                />
+              </>
             ) : (
-              <div 
-                id="header-traveller-badge"
-                style={{
-                  color: getSecurityLevelInfo(0).color,
-                  borderColor: getSecurityLevelInfo(0).color
-                }}
-                className="px-3 py-1 border rounded-lg text-xs font-bold font-mono tracking-wider"
-              >
-                Public User
-              </div>
+              <>
+                <div 
+                  id="header-traveller-badge"
+                  style={{
+                    color: getSecurityLevelInfo(0).color,
+                    borderColor: getSecurityLevelInfo(0).color
+                  }}
+                  className="hidden sm:block px-3 py-1 border rounded-lg text-xs font-bold font-mono tracking-wider"
+                >
+                  Public User
+                </div>
+                <button 
+                  onClick={() => setShowSettings(true)}
+                  style={{
+                    backgroundColor: getSecurityLevelInfo(0).color,
+                    borderColor: getSecurityLevelInfo(0).color
+                  }}
+                  className="block sm:hidden w-6 h-6 border rounded cursor-pointer hover:opacity-80 transition-opacity"
+                  title="Public User (Click for Settings)"
+                />
+              </>
             )}
+
+            {/* Bug Support Button */}
+            <button 
+              onClick={() => window.open("https://www.nms-agt.com/support", "_blank")}
+              className="p-2 border border-transparent rounded-lg transition-colors relative group cursor-pointer"
+              title="Contact AGT Support"
+            >
+              <motion.div
+                whileHover={{ rotate: 180 }}
+                whileTap={{ rotate: 360, scale: 0.92 }}
+                transition={{ type: "spring", stiffness: 180, damping: 12 }}
+                className="flex items-center justify-center"
+              >
+                <Bug className="w-5 h-5 text-[#FF0500]" />
+              </motion.div>
+            </button>
             
             {/* Spinning Settings cog */}
             <button 
