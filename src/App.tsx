@@ -30,6 +30,16 @@ import {
 } from 'lucide-react';
 import Papa from 'papaparse';
 import { jsPDF } from "jspdf";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip as RechartsTooltip,
+  ResponsiveContainer,
+  Cell
+} from 'recharts';
 
 // Media parser utility mapping Drive files & YouTube videos
 interface MediaSource {
@@ -1363,7 +1373,9 @@ export default function App() {
     'epic',
     'major',
     'minor',
-    'event detail'
+    'event detail',
+    'low',
+    'insignificant'
   ]);
   const [selectedCategories, setSelectedCategories] = useState<string[] | null>(null);
   const [travellerFilter, setTravellerFilter] = useState('');
@@ -1393,6 +1405,8 @@ export default function App() {
   // Major Timeline state managers
   const [showMajorTimeline, setShowMajorTimeline] = useState(false);
   const [selectedTimelineEvent, setSelectedTimelineEvent] = useState<string[] | null>(null);
+  const [showStatsModal, setShowStatsModal] = useState(false);
+  const [statsTab, setStatsTab] = useState<'categories' | 'civilizations'>('categories');
   const [activeMapCoordinate, setActiveMapCoordinate] = useState<{ coordinate: string; galaxy: string } | null>(null);
   const [pdfExporting, setPdfExporting] = useState(false);
 
@@ -1650,6 +1664,40 @@ export default function App() {
       }
     });
     return Array.from(valuesSet).sort();
+  }, [data]);
+
+  // Stats calculations for Category and Civilization breakdown
+  const categoryStatsData = useMemo(() => {
+    const counts: Record<string, number> = {};
+    data.forEach(row => {
+      if (row[6] && row[6].trim().toUpperCase() === 'Y') {
+        const cat = String(row[17] || 'Unknown').trim() || 'Uncategorized';
+        counts[cat] = (counts[cat] || 0) + 1;
+      }
+    });
+    return Object.entries(counts)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+  }, [data]);
+
+  const civilizationStatsData = useMemo(() => {
+    const counts: Record<string, number> = {};
+    data.forEach(row => {
+      if (row[6] && row[6].trim().toUpperCase() === 'Y') {
+        const civStr = String(row[34] || '').trim();
+        if (civStr) {
+          const tags = civStr.split(/[,;]+/).map(t => t.trim()).filter(Boolean);
+          tags.forEach(tag => {
+            counts[tag] = (counts[tag] || 0) + 1;
+          });
+        } else {
+          counts['None / Public'] = (counts['None / Public'] || 0) + 1;
+        }
+      }
+    });
+    return Object.entries(counts)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
   }, [data]);
 
   // Compute matching suggestions for the autocomplete
@@ -2392,6 +2440,22 @@ export default function App() {
               </>
             )}
 
+            {/* Info Statistics Button */}
+            <button 
+              onClick={() => setShowStatsModal(true)}
+              className="p-2 border border-transparent rounded-lg transition-colors relative group cursor-pointer"
+              title="Database Statistics Breakdown"
+            >
+              <motion.div
+                whileHover={{ rotate: 180 }}
+                whileTap={{ rotate: 360, scale: 0.92 }}
+                transition={{ type: "spring", stiffness: 180, damping: 12 }}
+                className="flex items-center justify-center"
+              >
+                <Info className="w-5 h-5 text-[#FF0500]" />
+              </motion.div>
+            </button>
+
             {/* Bug Support Button */}
             <button 
               onClick={() => window.open("https://www.nms-agt.com/support", "_blank")}
@@ -3058,7 +3122,7 @@ export default function App() {
                   setRawEndDate('');
                   setSearchWord('');
                   setSelectedCategories(null);
-                  setSelectedSignificance(['era', 'epic', 'major', 'minor', 'event detail']);
+                  setSelectedSignificance(['era', 'epic', 'major', 'minor', 'event detail', 'low', 'insignificant']);
                   setCivFilter('');
                   setTravellerFilter('');
                   setFilterByLocation(false);
@@ -3186,7 +3250,7 @@ export default function App() {
               <div className="flex items-center justify-between border-b border-[#FF0500]/30 pb-4 mb-6 shrink-0">
                 <h3 className="text-sm uppercase tracking-widest font-black text-agt-orange flex items-center gap-2">
                   <Settings className="w-4 h-4 text-[#FF0500]" />
-                  Configuration Settings
+                  Settings
                 </h3>
                 <button 
                   onClick={() => setShowSettings(false)}
@@ -3322,6 +3386,172 @@ export default function App() {
                     </button>
                   </div>
                 </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* STATISTICS MODAL PANEL */}
+      <AnimatePresence>
+        {showStatsModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowStatsModal(false)}
+              className="absolute inset-0 bg-black/85 backdrop-blur-sm"
+            />
+            
+            <motion.div 
+              initial={{ scale: 0.92, opacity: 0, y: 30 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.92, opacity: 0, y: 30 }}
+              className="relative max-w-2xl w-full max-h-[85vh] md:max-h-[90vh] bg-[#161616] border-2 border-[#FF0500] rounded-2xl overflow-hidden glass-card shadow-[0_15px_60px_rgba(255,5,0,0.25)] p-6 z-10 flex flex-col"
+            >
+              <div className="flex items-center justify-between border-b border-[#FF0500]/30 pb-4 mb-5 shrink-0">
+                <h3 className="text-sm uppercase tracking-widest font-black text-agt-orange flex items-center gap-2">
+                  <Database className="w-4 h-4 text-[#FF0500]" />
+                  Chronology Statistics
+                </h3>
+                <button 
+                  onClick={() => setShowStatsModal(false)}
+                  className="p-1 px-3 bg-[#FF0500] hover:bg-[#ff3330] text-white text-[10px] uppercase font-bold tracking-widest rounded-md hover:scale-[1.03] active:scale-[0.97] transition-all cursor-pointer flex items-center gap-1 font-mono"
+                >
+                  <X className="w-3 h-3" />
+                  <span>Close</span>
+                </button>
+              </div>
+
+              {/* Tab Selector */}
+              <div className="flex gap-2 mb-5 bg-black/40 p-1.5 rounded-xl border border-white/5 shrink-0">
+                <button
+                  onClick={() => setStatsTab('categories')}
+                  className={`flex-1 py-2 text-center text-xs uppercase font-bold tracking-wider rounded-lg transition-all cursor-pointer ${
+                    statsTab === 'categories'
+                      ? 'bg-[#FF0500] text-white font-black'
+                      : 'text-stone-400 hover:text-white hover:bg-white/5'
+                  }`}
+                >
+                  By Category
+                </button>
+                <button
+                  onClick={() => setStatsTab('civilizations')}
+                  className={`flex-1 py-2 text-center text-xs uppercase font-bold tracking-wider rounded-lg transition-all cursor-pointer ${
+                    statsTab === 'civilizations'
+                      ? 'bg-[#FF0500] text-white font-black'
+                      : 'text-stone-400 hover:text-white hover:bg-white/5'
+                  }`}
+                >
+                  By Civilization
+                </button>
+              </div>
+
+              {/* Chart scroll container */}
+              <div className="flex-1 overflow-y-auto pr-1 custom-scrollbar min-h-0 space-y-4">
+                <div className="text-[10px] font-mono uppercase tracking-wider text-[#FFB451]/60">
+                  Total Active Records Tracked: <span className="font-bold text-white">{data.filter(row => row[6] && row[6].trim().toUpperCase() === 'Y').length}</span>
+                </div>
+
+                {statsTab === 'categories' ? (
+                  categoryStatsData.length > 0 ? (
+                    <div className="bg-black/25 border border-white/5 p-4 rounded-xl">
+                      <h4 className="text-[11px] font-mono uppercase tracking-widest text-agt-orange font-bold mb-4">Event Frequency by Category</h4>
+                      <div className="w-full h-[360px] md:h-[400px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart
+                            layout="vertical"
+                            data={categoryStatsData}
+                            margin={{ top: 10, right: 30, left: 15, bottom: 10 }}
+                          >
+                            <CartesianGrid strokeDasharray="3 3" stroke="#ff050012" horizontal={true} vertical={true} />
+                            <XAxis type="number" stroke="#FFB45130" tick={{ fill: '#FFB451', fontSize: 9 }} />
+                            <YAxis 
+                              type="category" 
+                              dataKey="name" 
+                              stroke="#FFB45130" 
+                              tick={{ fill: '#ffffff', fontSize: 10 }} 
+                              width={120}
+                            />
+                            <RechartsTooltip 
+                              content={({ active, payload }) => {
+                                if (active && payload && payload.length) {
+                                  return (
+                                    <div className="bg-[#0f0f12] border-2 border-[#FF0500]/60 p-3.5 rounded-xl font-mono text-[11px] shadow-[0_4px_20px_rgba(255,5,0,0.2)]">
+                                      <p className="font-bold text-white uppercase tracking-wider mb-1">{payload[0].payload.name}</p>
+                                      <p className="text-[#FFB451]">
+                                        RECORDS: <span className="font-black text-white">{payload[0].value}</span>
+                                      </p>
+                                    </div>
+                                  );
+                                }
+                                return null;
+                              }}
+                              cursor={{ fill: '#ff05000a' }} 
+                            />
+                            <Bar dataKey="value" fill="#FF0500" radius={[0, 4, 4, 0]}>
+                              {categoryStatsData.map((entry, index) => (
+                                <Cell key={`cell-${index}`} fill={index % 2 === 0 ? '#FF0500' : '#FFB451'} />
+                              ))}
+                            </Bar>
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-center py-10 text-stone-500 font-mono text-xs">No category telemetry available.</div>
+                  )
+                ) : (
+                  civilizationStatsData.length > 0 ? (
+                    <div className="bg-black/25 border border-white/5 p-4 rounded-xl">
+                      <h4 className="text-[11px] font-mono uppercase tracking-widest text-agt-orange font-bold mb-4">Event Frequency by Civilization Tag</h4>
+                      <div className="text-[9px] font-mono text-stone-500 uppercase tracking-widest mb-3">Showing top 15 civilization alignments</div>
+                      <div className="w-full h-[360px] md:h-[400px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart
+                            layout="vertical"
+                            data={civilizationStatsData.slice(0, 15)}
+                            margin={{ top: 10, right: 30, left: 15, bottom: 10 }}
+                          >
+                            <CartesianGrid strokeDasharray="3 3" stroke="#ff050012" horizontal={true} vertical={true} />
+                            <XAxis type="number" stroke="#FFB45130" tick={{ fill: '#FFB451', fontSize: 9 }} />
+                            <YAxis 
+                              type="category" 
+                              dataKey="name" 
+                              stroke="#FFB45130" 
+                              tick={{ fill: '#ffffff', fontSize: 10 }} 
+                              width={120}
+                            />
+                            <RechartsTooltip 
+                              content={({ active, payload }) => {
+                                if (active && payload && payload.length) {
+                                  return (
+                                    <div className="bg-[#0f0f12] border-2 border-[#FF0500]/60 p-3.5 rounded-xl font-mono text-[11px] shadow-[0_4px_20px_rgba(255,5,0,0.2)]">
+                                      <p className="font-bold text-white uppercase tracking-wider mb-1">{payload[0].payload.name}</p>
+                                      <p className="text-[#FFB451]">
+                                        RECORDS: <span className="font-black text-white">{payload[0].value}</span>
+                                      </p>
+                                    </div>
+                                  );
+                                }
+                                return null;
+                              }}
+                              cursor={{ fill: '#ff05000a' }} 
+                            />
+                            <Bar dataKey="value" fill="#FF0500" radius={[0, 4, 4, 0]}>
+                              {civilizationStatsData.slice(0, 15).map((entry, index) => (
+                                <Cell key={`cell-${index}`} fill={index % 2 === 0 ? '#FF0500' : '#FFB451'} />
+                              ))}
+                            </Bar>
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-center py-10 text-stone-500 font-mono text-xs">No civilization telemetry available.</div>
+                  )
+                )}
               </div>
             </motion.div>
           </div>
@@ -3824,16 +4054,19 @@ export default function App() {
                             )}
 
                             {/* Timeline button box */}
-                            <button
+                            <motion.button
+                              whileHover={{ scale: 1.015, y: -2 }}
+                              whileTap={{ scale: 0.99 }}
+                              transition={{ type: "spring", stiffness: 350, damping: 22 }}
                               type="button"
                               onClick={() => setSelectedTimelineEvent(event)}
-                              className={`text-left px-4 py-3 border-2 ${borderClass} ${bgClass} ${textClass} rounded-xl hover:scale-[1.01] transition-all cursor-pointer font-bold text-xs sm:text-sm tracking-wide max-w-xl w-full shadow-[0_2px_8px_rgba(226,85,48,0.1)] hover:shadow-[0_4px_16px_rgba(226,85,48,0.2)] flex items-center justify-between gap-4`}
+                              className={`text-left px-4 py-3 border-2 ${borderClass} ${bgClass} ${textClass} rounded-xl cursor-pointer font-bold text-xs sm:text-sm tracking-wide max-w-xl w-full shadow-[0_2px_8px_rgba(226,85,48,0.1)] hover:shadow-[0_12px_28px_rgba(226,85,48,0.25)] flex items-center justify-between gap-4 transition-all duration-300`}
                             >
                               <span className="truncate pr-2">{event[3] || 'Untitled Record'}</span>
                               <span className={`text-[8px] tracking-widest font-mono uppercase px-1.5 py-0.5 rounded-md shrink-0 ${badgeClass}`}>
                                 {event[7]}
                               </span>
-                            </button>
+                            </motion.button>
                           </div>
                         );
                       })}
