@@ -1148,6 +1148,44 @@ const decodeXOR = (encodedText: string): string => {
   return decoded; 
 };
 
+const ENCRYPTION_KEY = 716;
+
+const encryptString = (text: string): string => {
+  let result = "";
+  for (let i = 0; i < text.length; i++) {
+    const charCode = text.charCodeAt(i) ^ ENCRYPTION_KEY;
+    result += String.fromCharCode(charCode);
+  }
+  return btoa(encodeURIComponent(result));
+};
+
+const decryptString = (encoded: string): string => {
+  try {
+    if (!encoded) return "";
+    const decodedBase64 = decodeURIComponent(atob(encoded));
+    let result = "";
+    for (let i = 0; i < decodedBase64.length; i++) {
+      const charCode = decodedBase64.charCodeAt(i) ^ ENCRYPTION_KEY;
+      result += String.fromCharCode(charCode);
+    }
+    return result;
+  } catch (e) {
+    return "";
+  }
+};
+
+const getEncryptedSession = () => {
+  const cookieVal = getCookie('agt_traveller_session');
+  if (!cookieVal) return null;
+  const decrypted = decryptString(cookieVal);
+  if (!decrypted) return null;
+  try {
+    return JSON.parse(decrypted);
+  } catch (e) {
+    return null;
+  }
+};
+
 const SIGNIFICANCE_LEVELS = [
   { id: 'era', label: 'Era' },
   { id: 'epic', label: 'Epic' },
@@ -1168,35 +1206,47 @@ const normalizeRowSignificance = (sig: string): string => {
 export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   
-  // Security levels and registration
-  const [savedTravellerName, setSavedTravellerName] = useState(() => getCookie('agt_traveller_name'));
-  const [savedTravellerId, setSavedTravellerId] = useState(() => getCookie('agt_traveller_id'));
+  // Security levels and registration from encrypted cookie
+  const [savedTravellerName, setSavedTravellerName] = useState<string>(() => {
+    const session = getEncryptedSession();
+    return session ? session.name : '';
+  });
+  const [savedTravellerPassword, setSavedTravellerPassword] = useState<string>(() => {
+    const session = getEncryptedSession();
+    return session ? session.password : '';
+  });
   const [savedSecurityLevel, setSavedSecurityLevel] = useState<number>(() => {
-    const s = getCookie('agt_security_level');
-    return s ? parseInt(s, 10) : 0;
+    const session = getEncryptedSession();
+    return session ? session.securityLevel : 0;
   });
 
   // Verification UI inputs inside settings
-  const [travellerNameInput, setTravellerNameInput] = useState(() => getCookie('agt_traveller_name'));
-  const [travellerIdInput, setTravellerIdInput] = useState(() => getCookie('agt_traveller_id'));
+  const [travellerNameInput, setTravellerNameInput] = useState<string>(() => {
+    const session = getEncryptedSession();
+    return session ? session.name : '';
+  });
+  const [travellerPasswordInput, setTravellerPasswordInput] = useState<string>(() => {
+    const session = getEncryptedSession();
+    return session ? session.password : '';
+  });
   
   const [verifyError, setVerifyError] = useState<React.ReactNode>('');
   const [isVerifying, setIsVerifying] = useState(false);
   const [popupMessage, setPopupMessage] = useState('');
   const [pdfBlockedMessage, setPdfBlockedMessage] = useState('');
 
-  const verifyCredentials = async (inputName: string, inputId: string) => {
+  const verifyCredentials = async (inputName: string, inputPassword: string) => {
     setVerifyError('');
     
-    if (!inputName.trim() || !inputId.trim()) {
-      setVerifyError('Please enter both Traveller Name and ID.');
+    if (!inputName.trim() || !inputPassword.trim()) {
+      setVerifyError('Please enter both Traveller Name and Password.');
       return;
     }
     
-    // Alphanumeric format check for traveller ID format: ########-????-####
-    const idRegex = /^\d{8}-[A-Za-z0-9]{4}-\d{4}$/;
-    if (!idRegex.test(inputId.trim())) {
-      setVerifyError('Invalid AGT Traveller ID format. Must be like ########-????-####');
+    // Alphanumeric format check for password format: exactly 5 characters
+    const pwRegex = /^[A-Za-z0-9]{5}$/;
+    if (!pwRegex.test(inputPassword.trim())) {
+      setVerifyError('Password must be a five character alphanumeric sequence.');
       return;
     }
 
@@ -1224,13 +1274,13 @@ export default function App() {
         return;
       }
       
-      const encodedId = matchedRow[1] || '';
-      const decodedId = decodeXOR(encodedId);
+      const encodedPassword = matchedRow[3] || '';
+      const decodedPassword = decodeXOR(encodedPassword);
       
       const nameMatches = matchedRow[0].toLowerCase() === inputName.trim().toLowerCase();
-      const idMatches = decodedId.trim().toLowerCase() === inputId.trim().toLowerCase();
+      const passwordMatches = decodedPassword.trim().toLowerCase() === inputPassword.trim().toLowerCase();
       
-      if (!nameMatches || !idMatches) {
+      if (!nameMatches || !passwordMatches) {
         handleVerificationFailure();
         return;
       }
@@ -1259,18 +1309,38 @@ export default function App() {
       }
       secLevelNum = Math.min(Math.max(secLevelNum, 0), 5);
       
-      // Save to cookies
-      setCookie('agt_traveller_name', matchedRow[0]);
-      setCookie('agt_traveller_id', decodedId.trim());
-      setCookie('agt_security_level', String(secLevelNum));
+      // Save traveller name, security level, and password to an encrypted cookie
+      const sessionObj = {
+        name: matchedRow[0],
+        securityLevel: secLevelNum,
+        password: decodedPassword.trim()
+      };
       
-      const checkName = getCookie('agt_traveller_name');
-      const checkId = getCookie('agt_traveller_id');
-      const checkLevel = getCookie('agt_security_level');
+      const encryptedSessionValue = encryptString(JSON.stringify(sessionObj));
+      setCookie('agt_traveller_session', encryptedSessionValue);
       
-      if (checkName === matchedRow[0] && checkId === decodedId.trim() && checkLevel === String(secLevelNum)) {
+      // Attempt to read it back to verify proper save
+      const checkCookie = getCookie('agt_traveller_session');
+      let isSavedCorrectly = false;
+      if (checkCookie) {
+        const checkDecrypted = decryptString(checkCookie);
+        if (checkDecrypted) {
+          try {
+            const checkParsed = JSON.parse(checkDecrypted);
+            if (checkParsed.name === matchedRow[0] && 
+                checkParsed.securityLevel === secLevelNum && 
+                checkParsed.password === decodedPassword.trim()) {
+              isSavedCorrectly = true;
+            }
+          } catch (e) {
+            console.error("Verification cookie parse error", e);
+          }
+        }
+      }
+      
+      if (isSavedCorrectly) {
         setSavedTravellerName(matchedRow[0]);
-        setSavedTravellerId(decodedId.trim());
+        setSavedTravellerPassword(decodedPassword.trim());
         setSavedSecurityLevel(secLevelNum);
         
         setPopupMessage("Verification successful, setting saved");
@@ -1292,7 +1362,7 @@ export default function App() {
     setPopupMessage("Verification unsuccessful");
     setVerifyError(
       <span>
-        Traveller Name and ID and does not match, Please consult{" "}
+        Traveller Name and password do not match, Please consult{" "}
         <a 
           href="https://www.nms-agt.com/support/traveller-id" 
           target="_blank" 
@@ -1306,17 +1376,18 @@ export default function App() {
   };
 
   const handleClearCredentials = () => {
+    deleteCookie('agt_traveller_session');
     deleteCookie('agt_traveller_name');
     deleteCookie('agt_traveller_id');
     deleteCookie('agt_security_level');
 
-    const checkName = getCookie('agt_traveller_name');
-    if (!checkName) {
+    const checkSession = getEncryptedSession();
+    if (!checkSession) {
       setSavedTravellerName('');
-      setSavedTravellerId('');
+      setSavedTravellerPassword('');
       setSavedSecurityLevel(0);
       setTravellerNameInput('');
-      setTravellerIdInput('');
+      setTravellerPasswordInput('');
       setVerifyError('');
       setPopupMessage('Clearing successful');
     } else {
@@ -1761,7 +1832,7 @@ export default function App() {
   const { filteredRecords, classifiedOmittedCount } = useMemo(() => {
     // Only parse rows where Column G (index 6, Use of timeline) equals "Y"
     const timelineRows = data.filter(row => row[6] && row[6].trim().toUpperCase() === 'Y');
-    const maxAllowedSecurity = (savedTravellerName && savedTravellerId) ? savedSecurityLevel : 0;
+    const maxAllowedSecurity = (savedTravellerName && savedTravellerPassword) ? savedSecurityLevel : 0;
 
     let omittedCount = 0;
     const filtered = [];
@@ -1865,7 +1936,7 @@ export default function App() {
       }
 
       // 7. Omit Public / Private check (only applicable if verified)
-      if (savedTravellerName && savedTravellerId) {
+      if (savedTravellerName && savedTravellerPassword) {
         if (omitPublicRecords && rowSec === 0) {
           continue;
         }
@@ -1895,7 +1966,7 @@ export default function App() {
     regionFilter, 
     galaxyFilter, 
     savedTravellerName, 
-    savedTravellerId, 
+    savedTravellerPassword, 
     savedSecurityLevel, 
     searchWord,
     omitPublicRecords,
@@ -1942,10 +2013,11 @@ export default function App() {
   };
 
   const handleGeneratePDF = async () => {
-    const cookieName = getCookie('agt_traveller_name');
-    const cookieId = getCookie('agt_traveller_id');
+    const session = getEncryptedSession();
+    const cookieName = session?.name;
+    const cookiePassword = session?.password;
     
-    if (!cookieName || !cookieId) {
+    if (!cookieName || !cookiePassword) {
       setPdfBlockedMessage("PDF Report is only available to registered AGT Travellers. Enter your credentials in the setting menu");
       return;
     }
@@ -2394,7 +2466,7 @@ export default function App() {
               </span>
             </div>
             
-            {savedTravellerName && savedTravellerId ? (
+            {savedTravellerName && savedTravellerPassword ? (
               <>
                 <div 
                   id="header-traveller-badge"
@@ -2882,7 +2954,7 @@ export default function App() {
                     <span>Filter by Location</span>
                   </label>
 
-                  {savedTravellerName && savedTravellerId && (
+                  {savedTravellerName && savedTravellerPassword && (
                     <>
                       <label className="flex items-center gap-3 text-xs text-agt-orange hover:text-white cursor-pointer select-none font-bold uppercase tracking-wider font-sans">
                         <input
@@ -3308,21 +3380,22 @@ export default function App() {
 
                     <div className="space-y-1">
                       <label className="text-[10px] uppercase font-bold tracking-wider text-agt-orange/60 block">
-                        AGT Traveller ID
+                        Password
                       </label>
                       <input
-                        type="text"
-                        placeholder="Format: ########-????-####"
-                        value={travellerIdInput}
+                        type="password"
+                        placeholder="Alphanumeric, exactly 5 characters"
+                        value={travellerPasswordInput}
                         onChange={(e) => {
-                          setTravellerIdInput(e.target.value.slice(0, 30));
+                          const clean = e.target.value.replace(/[^a-zA-Z0-9]/g, '').slice(0, 5);
+                          setTravellerPasswordInput(clean);
                         }}
                         className="w-full bg-[#1c1c1c] border border-[#FF0500]/30 focus:outline-none focus:ring-1 focus:ring-[#FF0500] px-3.5 py-2 text-xs text-[#FFB451] rounded-xl font-mono placeholder-agt-orange/35"
                       />
                     </div>
                   </div>
 
-                  {!savedTravellerName && !savedTravellerId && (
+                  {!savedTravellerName && !savedTravellerPassword && (
                     <div className="bg-black/30 border border-white/5 rounded-xl p-3 text-[10px]">
                       <div className="font-bold uppercase tracking-wider text-yellow-500/80">STATUS: PUBLIC PREVIEW</div>
                     </div>
@@ -3337,7 +3410,7 @@ export default function App() {
                   <div className="flex gap-2">
                     <button
                       type="button"
-                      onClick={() => verifyCredentials(travellerNameInput, travellerIdInput)}
+                      onClick={() => verifyCredentials(travellerNameInput, travellerPasswordInput)}
                       disabled={isVerifying}
                       className="flex-1 py-2.5 bg-[#FF0500] hover:bg-[#ff3330] disabled:opacity-50 text-white text-[10px] font-bold uppercase tracking-wider rounded-xl transition-all cursor-pointer text-center"
                     >
@@ -3353,7 +3426,7 @@ export default function App() {
                     </button>
                   </div>
 
-                  {savedTravellerName && savedTravellerId && (
+                  {savedTravellerName && savedTravellerPassword && (
                     <div className="flex items-center justify-between text-[10px] font-mono pt-3 border-t border-[#FF0500]/25">
                       <span className="text-white">Verified User: <span className="text-white font-bold">{savedTravellerName}</span></span>
                       <span>
