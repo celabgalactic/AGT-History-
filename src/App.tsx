@@ -841,7 +841,7 @@ const SingleTimelineEventDetailModal = ({
         animate={{ scale: 1, y: 0, opacity: 1 }}
         exit={{ scale: 0.9, y: 30, opacity: 0 }}
         transition={{ type: "spring", damping: 25, stiffness: 220 }}
-        className="relative max-w-3xl w-full max-h-[90vh] bg-[#0c0c0c]/95 border-2 border-agt-orange/30 rounded-2xl shadow-[0_0_50px_rgba(255,180,81,0.15)] flex flex-col z-[110] overflow-hidden"
+        className="relative max-w-6xl xl:max-w-7xl w-full max-h-[90vh] bg-[#0c0c0c]/95 border-2 border-agt-orange/30 rounded-2xl shadow-[0_0_50px_rgba(255,180,81,0.15)] flex flex-col z-[110] overflow-hidden"
       >
         <div className="absolute top-0 left-0 right-0 h-[3px] bg-gradient-to-r from-transparent via-[#FFB451] to-transparent"></div>
 
@@ -2428,7 +2428,7 @@ export default function App() {
     >
       {/* Header section */}
       <header className="border-b border-[#FF0500] bg-black/40 backdrop-blur-md sticky top-0 z-[80]">
-        <div className="max-w-5xl mx-auto px-6 h-20 flex items-center justify-between">
+        <div className="w-full px-6 md:px-12 lg:px-16 h-20 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <img 
               src="/api/asset-proxy?id=1h9HvAGeru6Vo7PiWdLbXmGogD8TySnnz" 
@@ -2564,8 +2564,8 @@ export default function App() {
       </header>
 
       {/* Contribute button placed after the header */}
-      <div className="relative max-w-5xl mx-auto w-full px-6 shrink-0">
-        <div className="absolute top-4 right-6 z-40">
+      <div className="relative w-full px-6 md:px-12 lg:px-16 shrink-0">
+        <div className="absolute top-4 right-6 md:right-12 lg:right-16 z-40">
           <button
             type="button"
             onClick={() => window.open("https://www.nms-agt.com/contribute", "_blank")}
@@ -2578,8 +2578,8 @@ export default function App() {
       </div>
 
       {/* Main Container screen */}
-      <main className="max-w-5xl mx-auto px-6 py-12 flex-grow flex flex-col justify-center">
-        <div className="w-full max-w-2xl mx-auto space-y-12">
+      <main className="w-full px-6 md:px-12 lg:px-16 py-8 md:py-12 flex-grow flex flex-col justify-center">
+        <div className="w-full space-y-12">
           
           {/* Header Title Grid */}
           <div className="text-center space-y-4">
@@ -2613,7 +2613,7 @@ export default function App() {
               Select Historical Records
             </div>
             
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
               {/* Earth dates boundaries fields */}
               <div className="flex flex-col gap-2">
                 <label className="text-[10px] uppercase tracking-wider text-agt-orange/60 font-bold flex items-center justify-between">
@@ -2719,8 +2719,8 @@ export default function App() {
                 </span>
               </div>
 
-              {/* Search Word Input (spanning full width md:col-span-2) */}
-              <div className="flex flex-col gap-2 md:col-span-2">
+              {/* Search Word Input */}
+              <div className="flex flex-col gap-2 md:col-span-2 lg:col-span-3 xl:col-span-2">
                 <label className="text-[10px] uppercase tracking-wider text-agt-orange/60 font-bold flex items-center gap-1.5 font-sans">
                   <Search className="w-3.5 h-3.5 text-red-500" />
                   Search Word
@@ -2942,7 +2942,7 @@ export default function App() {
               </div>
 
               {/* Filter by Location checkbox toggle */}
-              <div className="md:col-span-2 border-t border-[#FF0500]/20 pt-4 flex flex-col gap-4">
+              <div className="md:col-span-2 lg:col-span-3 xl:col-span-4 border-t border-[#FF0500]/20 pt-4 flex flex-col gap-4">
                 <div className="flex flex-wrap items-center gap-6">
                   <label className="flex items-center gap-3 text-xs text-agt-orange hover:text-white cursor-pointer select-none font-bold uppercase tracking-wider font-sans">
                     <input
@@ -3108,7 +3108,7 @@ export default function App() {
                   </div>
 
                   {/* Galaxy Grid Item */}
-                  <div ref={galaxyAutocompleteRef} className="flex flex-col gap-2 relative md:col-span-2">
+                  <div ref={galaxyAutocompleteRef} className="flex flex-col gap-2 relative md:col-span-2 lg:col-span-1 xl:col-span-2">
                     <label className="text-[10px] uppercase tracking-wider text-agt-orange/60 font-bold flex items-center gap-1.5 font-sans">
                       <MapPin className="w-3.5 h-3.5 text-red-500" />
                       Galaxy Filter
@@ -3267,7 +3267,7 @@ export default function App() {
 
       {/* FOOTER SECTION */}
       <footer className="bg-[#FFB451] mt-auto">
-        <div className="max-w-5xl mx-auto px-6 py-12 flex flex-col items-center gap-6 text-black">
+        <div className="w-full px-6 md:px-12 lg:px-16 py-12 flex flex-col items-center gap-6 text-black">
           <div className="flex flex-wrap justify-center items-center gap-y-2 text-[10px] uppercase tracking-[0.2em] font-bold">
             <a href="https://www.nms-agt.com" target="_blank" rel="noopener noreferrer" className="hover:opacity-60 transition-opacity">Home</a>
             <span className="ml-1 mr-2 text-black/40">|</span>
@@ -3691,7 +3691,7 @@ export default function App() {
               animate={{ scale: 1, y: 0, opacity: 1 }}
               exit={{ scale: 0.9, y: 30, opacity: 0 }}
               transition={{ type: "spring", damping: 25, stiffness: 220 }}
-              className="relative max-w-3xl w-full max-h-[90vh] bg-[#0c0c0c]/95 border-2 border-agt-orange/30 rounded-2xl shadow-[0_0_50px_rgba(255,180,81,0.15)] flex flex-col z-10 overflow-hidden"
+              className="relative max-w-6xl xl:max-w-7xl w-full max-h-[90vh] bg-[#0c0c0c]/95 border-2 border-agt-orange/30 rounded-2xl shadow-[0_0_50px_rgba(255,180,81,0.15)] flex flex-col z-10 overflow-hidden"
             >
               <div className="absolute top-0 left-0 right-0 h-[3px] bg-gradient-to-r from-transparent via-[#FFB451] to-transparent"></div>
 
@@ -4015,7 +4015,7 @@ export default function App() {
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.92, opacity: 0, y: 30 }}
               transition={{ type: "spring", damping: 25, stiffness: 220 }}
-              className="relative max-w-4xl w-full h-[85vh] bg-[#0c0c0c] border-2 border-[#FF0500] rounded-2xl flex flex-col z-10 overflow-hidden shadow-[0_0_50px_rgba(255,5,0,0.25)]"
+              className="relative max-w-6xl xl:max-w-7xl w-full h-[85vh] bg-[#0c0c0c] border-2 border-[#FF0500] rounded-2xl flex flex-col z-10 overflow-hidden shadow-[0_0_50px_rgba(255,5,0,0.25)]"
             >
               {/* Highlight line top */}
               <div className="absolute top-0 left-0 right-0 h-[3px] bg-gradient-to-r from-transparent via-[#E25530] to-transparent"></div>
